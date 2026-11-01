@@ -1,0 +1,13 @@
+{
+  "epoch": 2,
+  "global_step": 1800,
+  "exact_full": 6,
+  "exact_budget": 9,
+  "exact_fg": 10,
+  "mask_iou": 0.9592312026955188,
+  "val_loss": 4.225513010025025,
+  "pixel_fg_pct": 61.917780477926286,
+  "pixel_query_pct": 79.97990815154994,
+  "timestamp_utc": "2026-11-01T15:40:35.243711+00:00",
+  "fgns_version": "fgns-v4.1.0"
+}

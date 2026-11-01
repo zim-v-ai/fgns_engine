@@ -1,0 +1,23 @@
+% FGNS-TRM Publication Tables (Generated automatically)
+\begin{table*}[t]
+\centering
+\small
+\caption{Comprehensive Architectural Ablations of FGNS-TRM Components on the ARC Benchmark.}
+\label{tab:fgns_ablations}
+\begin{tabular}{llccc}
+\toprule
+\textbf{Subsystem} & \textbf{Variant} & \textbf{Prior} & \textbf{Query Loss $\downarrow$} & \textbf{Key Scientific Metric} \\
+\midrule
+NA3D Transport & Isotropic Scalar & None & 1.5389 & $\theta_{\text{err}}= 1.57$ rad \\
+ & Planar $SO(2)$ & 2D Circle & 1.4818 & $\theta_{\text{err}}= 0.00$ rad \\
+ & \textbf{NA3D Stiefel} & \textbf{$\text{St}(3, d)$ Lie Rotor} & \textbf{1.9243} & \textbf{$\theta_{\text{err}}= 0.08$ rad} \\
+\midrule
+Sheaf Laplacian & Standard GCN & $W=I$ & 1.7402 & $\mathcal{E}_\mathcal{F}= 3.023$ \\
+ & Graph Attention & Scalar & 1.7119 & $\mathcal{E}_\mathcal{F}= 3.009$ \\
+ & \textbf{Cellular Sheaf} & \textbf{$W \in O(d)$} & \textbf{1.8548} & \textbf{$\mathcal{E}_\mathcal{F}= 22.152$} \\
+\midrule
+Test-Time Training & Standard L2 & $\lambda \|W\|_2^2$ & 0.6007 & $r_{\text{eff}}= 2.51$ \\
+ & \textbf{Spectral MDL} & \textbf{Schatten-1 $\|W\|_*$} & \textbf{0.3073} & \textbf{$r_{\text{eff}}= 2.30$} \\
+\bottomrule
+\end{tabular}
+\end{table*}

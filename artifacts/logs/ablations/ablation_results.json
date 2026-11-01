@@ -1,0 +1,44 @@
+{
+  "metadata": {
+    "benchmark_tasks": 2,
+    "device": "cuda",
+    "elapsed_seconds": 41.33,
+    "timestamp": "2026-11-01T14:54:33Z"
+  },
+  "ablation_a_cellular_sheaf": {
+    "isotropic_gcn": {
+      "active_focal_loss": 0.012007450620785676,
+      "gradient_norm": 164.74639993254522,
+      "steps": 2
+    },
+    "cellular_sheaf": {
+      "active_focal_loss": 0.0006243153184186667,
+      "gradient_norm": 103.81704753285076,
+      "steps": 2
+    }
+  },
+  "ablation_b_spectral_mdl": {
+    "standard_l2_ttt": {
+      "effective_rank_r_eff": 2.0668564438819885,
+      "query_generalization_loss": 1.3194255020353012,
+      "steps": 2
+    },
+    "spectral_mdl_ttt": {
+      "effective_rank_r_eff": 2.5323891639709473,
+      "query_generalization_loss": 0.0039067568541213404,
+      "steps": 2
+    }
+  },
+  "ablation_c_boundary_size": {
+    "global_average_pool": {
+      "exact_dimension_match_pct": 0.0,
+      "matched": 0,
+      "total": 2
+    },
+    "boundary_metric_flux": {
+      "exact_dimension_match_pct": 100.0,
+      "matched": 2,
+      "total": 2
+    }
+  }
+}

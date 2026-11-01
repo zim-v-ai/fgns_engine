@@ -1,0 +1,26 @@
+{
+  "include": [
+    "fgns",
+    "tests",
+    "scripts"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    ".venv",
+    ".pytest_cache",
+    "data",
+    "artifacts",
+    "target",
+    "kon-saves"
+  ],
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.13",
+  "pythonPlatform": "Windows",
+  "extraPaths": [
+    "."
+  ],
+  "typeCheckingMode": "basic",
+  "reportPrivateImportUsage": "none",
+  "reportMissingTypeStubs": false
+}

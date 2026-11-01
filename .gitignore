@@ -1,0 +1,76 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# C extensions & Build artifacts
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# C++ / CUDA / Triton compilation targets and caches
+target/
+*.obj
+*.o
+*.lib
+*.a
+*.dll
+*.so
+*.dylib
+
+# PyTorch large model weights and checkpoints (>50MB)
+*.pt
+*.pth
+*.bin
+*.ckpt
+*.safetensors
+artifacts/checkpoints/*.pt
+artifacts/checkpoints/*.pth
+
+# ARC-AGI and synthetic datasets (>5GB)
+data/
+data/**
+
+# Raw runtime logs and heavy streaming session dumps
+artifacts/logs/*.log
+artifacts/logs/*.jsonl
+*.log
+
+# Explicitly preserve ablation reports for scientific paper track
+!artifacts/logs/ablations/
+!artifacts/logs/ablations/**
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Testing & quality caches
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+
+# Operating system files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+[Dd]esktop.ini

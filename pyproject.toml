@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fgns_engine"
+version = "4.1.4"
+description = "Finsler-Gauge Cellular Sheaf Network (FGNS) for ARC-AGI-2"
+license = { text = "MIT-0" }
+authors = [{ name = "Vyacheslav Zimovsky", email = "v.zimovsky.ai@gmail.com" }]
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "torch>=2.5.0",
+    "torchvision>=0.20.0",
+    "triton-windows>=3.0.0",
+    "numpy>=1.26.0",
+    "scipy>=1.13.0",
+    "einops>=0.8.0",
+    "pydantic>=2.8.0",
+    "rich>=13.7.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.5.0",
+    "mypy>=1.10.0"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["fgns*"]

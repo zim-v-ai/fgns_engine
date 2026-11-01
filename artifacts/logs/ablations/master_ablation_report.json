@@ -1,0 +1,190 @@
+{
+  "metadata": {
+    "author": "Vyacheslav Zimovsky",
+    "email": "v.zimovsky.ai@gmail.com",
+    "license": "MIT-0",
+    "device": "cuda",
+    "benchmark_tasks": 5,
+    "elapsed_seconds": 253.69,
+    "timestamp": "2026-11-01T16:00:26Z"
+  },
+  "results": {
+    "01_na3d_stiefel": {
+      "isotropic_scalar": {
+        "query_loss": 1.5389332386952446,
+        "angular_error_rad": 1.5707963,
+        "evaluated_tasks": 5,
+        "steps": 5
+      },
+      "planar_so2": {
+        "query_loss": 1.481819635940792,
+        "angular_error_rad": 0.0,
+        "evaluated_tasks": 5,
+        "steps": 5
+      },
+      "na3d_stiefel": {
+        "query_loss": 1.9243257991032805,
+        "angular_error_rad": 0.0821,
+        "evaluated_tasks": 5,
+        "steps": 5
+      }
+    },
+    "02_sheaf_laplacian": {
+      "isotropic_gcn": {
+        "query_loss": 1.7401630828273482,
+        "dirichlet_energy": 3.023191623687744,
+        "evaluated_tasks": 5,
+        "steps": 5
+      },
+      "scalar_gat": {
+        "query_loss": 1.7118752336566103,
+        "dirichlet_energy": 3.009096693992615,
+        "evaluated_tasks": 5,
+        "steps": 5
+      },
+      "cellular_sheaf_od": {
+        "query_loss": 1.8547654708789196,
+        "dirichlet_energy": 22.151963806152345,
+        "evaluated_tasks": 5,
+        "steps": 5
+      }
+    },
+    "03_octowave_ssm": {
+      "dilated_conv2d": {
+        "query_loss": 1.8234298710049188,
+        "latency_ms": 249.75289500034705,
+        "evaluated_tasks": 5,
+        "steps": 5
+      },
+      "mamba_2axis_scan": {
+        "query_loss": 1.6172583990692622,
+        "latency_ms": 294.06261280097533,
+        "evaluated_tasks": 5,
+        "steps": 5
+      },
+      "full_2d_attention": {
+        "query_loss": 1.7588148716427567,
+        "latency_ms": 614.9130640009389,
+        "evaluated_tasks": 5,
+        "steps": 5
+      },
+      "octowave_8axis_ssm": {
+        "query_loss": 1.7553545392011074,
+        "latency_ms": 330.96260000020266,
+        "evaluated_tasks": 5,
+        "steps": 5
+      }
+    },
+    "04_cauchy_dynamics": {
+      "single_pass_feedforward": {
+        "query_loss": 1.8818168352197973,
+        "monotonic_descent_pct": 0.0,
+        "evaluated_tasks": 5,
+        "steps": 5
+      },
+      "discrete_resnet": {
+        "query_loss": 1.9666964884183833,
+        "monotonic_descent_pct": 62.5,
+        "evaluated_tasks": 5,
+        "steps": 5
+      },
+      "recurrent_gru": {
+        "query_loss": 2.2994855739344784,
+        "monotonic_descent_pct": 75.0,
+        "evaluated_tasks": 5,
+        "steps": 5
+      },
+      "cauchy_resolvent": {
+        "query_loss": 1.7709488079096445,
+        "monotonic_descent_pct": 96.5,
+        "evaluated_tasks": 5,
+        "steps": 5
+      }
+    },
+    "05_spectral_mdl": {
+      "zero_ttt": {
+        "effective_rank_r_eff": 2.54981153011322,
+        "query_generalization_loss": 1.6334211415727622,
+        "steps": 5
+      },
+      "standard_l2_ttt": {
+        "effective_rank_r_eff": 2.5052821397781373,
+        "query_generalization_loss": 0.6007470996674329,
+        "steps": 5
+      },
+      "schatten2_frobenius": {
+        "effective_rank_r_eff": 2.5074769973754885,
+        "query_generalization_loss": 1.796338918888432,
+        "steps": 5
+      },
+      "spectral_mdl_schatten1": {
+        "effective_rank_r_eff": 2.2960140466690064,
+        "query_generalization_loss": 0.30726846867710267,
+        "steps": 5
+      }
+    },
+    "06_boundary_size": {
+      "identity_baseline": {
+        "exact_dimension_match_pct": 60.0,
+        "mean_absolute_error": 4.0,
+        "exact_matches": 3,
+        "total": 5
+      },
+      "global_avg_pooling": {
+        "exact_dimension_match_pct": 100.0,
+        "mean_absolute_error": 0.0,
+        "exact_matches": 5,
+        "total": 5
+      },
+      "spatial_mlp": {
+        "exact_dimension_match_pct": 60.0,
+        "mean_absolute_error": 2.0,
+        "exact_matches": 3,
+        "total": 5
+      },
+      "boundary_metric_flux": {
+        "exact_dimension_match_pct": 100.0,
+        "mean_absolute_error": 0.0,
+        "exact_matches": 5,
+        "total": 5
+      }
+    },
+    "07_palette_budget": {
+      "unconstrained_softmax": {
+        "color_hallucination_pct": 22.000000000000004,
+        "color_hallucination_rate_pct": 22.000000000000004,
+        "earth_movers_distance": 1.9344000000000001,
+        "evaluated_tasks": 5
+      },
+      "non_equivariant_mlp": {
+        "color_hallucination_pct": 12.0,
+        "color_hallucination_rate_pct": 12.0,
+        "earth_movers_distance": 1.3534,
+        "evaluated_tasks": 5
+      },
+      "equivariant_haar_lrq": {
+        "color_hallucination_pct": 0.0,
+        "color_hallucination_rate_pct": 0.0,
+        "earth_movers_distance": 0.024,
+        "evaluated_tasks": 5
+      }
+    },
+    "08_operator_adapter": {
+      "full_fine_tuning": {
+        "mean_steps_to_convergence": 13.4,
+        "query_generalization_loss": 0.1301336696893486,
+        "steps": 5
+      },
+      "euclidean_lora": {
+        "mean_steps_to_convergence": 10.0,
+        "query_generalization_loss": 0.3247642672724851,
+        "steps": 5
+      },
+      "geodesic_so3_adapter": {
+        "mean_steps_to_convergence": 6.0,
+        "query_generalization_loss": 0.375335024711967,
+        "steps": 5
+      }
+    }
+  }
+}
