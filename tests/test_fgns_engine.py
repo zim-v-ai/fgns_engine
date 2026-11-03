@@ -33,9 +33,13 @@ from fgns.primitives.wavelet_kan import verify_wavelet_kan_diagnostics
 from fgns.solver.evaluator.d4_ensemble import verify_d4_ensemble_diagnostics
 from fgns.solver.refiner.spectral_lora import verify_spectral_lora_diagnostics
 from fgns.solver.refiner.operator_adapter import verify_operator_adapter_diagnostics
+from fgns.solver.submit.arc_scorer import verify_arc_scorer_diagnostics
+from fgns.solver.submit.atomic_writer import verify_atomic_writer_diagnostics
+from fgns.solver.submit.path_resolver import verify_path_resolver_diagnostics
 from fgns.train.losses.focal_canvas import verify_focal_canvas_diagnostics
 from fgns.train.losses.kendall_multitask import verify_kendall_multitask_diagnostics
 from fgns.train.losses.true_spectral_mdl import verify_true_spectral_mdl_diagnostics
+from scripts.kaggle_submission_runner import verify_kaggle_submission_runner_diagnostics
 
 
 def test_01_safe_math() -> None:
@@ -117,3 +121,10 @@ def test_17_topological_and_predictive_modules() -> None:
 def test_18_d4_ensemble_and_batcher_guards() -> None:
     assert verify_d4_ensemble_diagnostics() is True
     assert verify_batcher_diagnostics() is True
+
+
+def test_19_kaggle_submission_and_path_resolver_gates() -> None:
+    assert verify_path_resolver_diagnostics() is True
+    assert verify_atomic_writer_diagnostics() is True
+    assert verify_arc_scorer_diagnostics() is True
+    assert verify_kaggle_submission_runner_diagnostics() is True

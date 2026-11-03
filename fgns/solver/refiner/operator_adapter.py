@@ -1,11 +1,13 @@
 """
 Location: // fgns_engine/fgns/solver/refiner/operator_adapter.py
-Description: Full-Network Geodesic SO(3)^C Test-Time Adaptation (TransductiveOperatorAdapter)
-             with D4 x S9 Color-Permutation Automorphism Regularization (FGNS v4.1.0):
-               1. Zero LoRA bottleneck: full expressive adaptation of the neural manifold.
-               2. Stochastic D4 x S9 Color-Permutation Augmentation on TTT steps, preventing
-                  shortcut color memorization and compelling relational support induction!
-               3. Zero-Shot Step-0 Analytical Consensus Lock for exact D4/Bravais/Eikonal tasks.
+Description: D4 x S9 Automorphism-Equivariant Geodesic SO(3)^C Test-Time Adaptation Engine
+             with Pure Perturbation-Delta Schatten-1 MDL Regularization (FGNS v4.5.0):
+               1. Orthonormal Palette Basis Preservation: freezes projector.palette during TTT so
+                  Theorem I orthogonal subspace splitting R^D = H_color^(11) (+) H_geom^(117) remains exact.
+               2. Pure Perturbation-Delta Spectral MDL: evaluates Schatten-1 nuclear norm and Von Neumann
+                  entropy strictly on task weight perturbations Delta_W = W - W_init (zero base-weight destruction!).
+               3. Equivariant Gradient Filtering on S9 Color-Permuted Steps.
+               4. Zero-Shot Step-0 Analytical Consensus Lock for exact D4/Bravais/Eikonal/Morphological tasks.
 Language: Python 3.12+ / PyTorch 2.5+ / Test-Time Optimization sm_120 Aligned
 Compliance: Zero-Hash Directives Strictly Enforced (Exclusively Docstrings for Comments)
 """
@@ -38,13 +40,13 @@ from fgns.types import BatchData, LossTelemetry, ModelOutput
 
 DEFAULT_LOOCV_TAU: Final[float] = 0.05
 DEFAULT_MAX_TTT_STEPS: Final[int] = 30000
-MAX_PTTSA_NORM: Final[float] = 2.50
+MAX_PTTSA_NORM: Final[float] = 2.00
 MAX_BATCHED_FOLDS: Final[int] = 3
 
 
 class TransductiveOperatorAdapter:
     """
-    Full-Network Geodesic Test-Time Adaptation Engine under D4 x S9 Group Automorphisms.
+    D4 x S9 Automorphism-Equivariant Geodesic Test-Time Adaptation Engine.
     """
 
     @staticmethod
@@ -139,7 +141,11 @@ class TransductiveOperatorAdapter:
 
         pttsa_delta = getattr(model, "pttsa_rule_delta", None)
         amp_device = "cuda" if device.type == "cuda" else "cpu"
-        amp_enabled = device.type == "cuda"
+        amp_enabled = (
+            (device.type == "cuda")
+            and torch.cuda.is_available()
+            and (torch.cuda.get_device_capability(device)[0] >= 8)
+        )
 
         with torch.no_grad():
             for q_idx in range(n_pairs):
@@ -225,6 +231,7 @@ class TransductiveOperatorAdapter:
         model = copy.deepcopy(base_model).to(device)
 
         frozen_ttt_prefixes = (
+            "projector.palette",
             "projector.lie_resonator",
             "projector.spectral_topology",
             "chordal_coord_proj",
@@ -243,6 +250,10 @@ class TransductiveOperatorAdapter:
             torch.zeros((1, model.num_na3d_cells, 3), dtype=torch.float32, device=device)
         )
 
+        initial_operator_refs = [
+            w.detach().clone() for w in cls._extract_core_operator_matrices(model)
+        ]
+
         network_params = [
             p
             for n, p in model.named_parameters()
@@ -255,7 +266,7 @@ class TransductiveOperatorAdapter:
         use_fused = torch.cuda.is_available() and device.type == "cuda"
         optimizer = torch.optim.AdamW(
             [
-                {"params": pttsa_params, "lr": config.ttt.base_learning_rate * 3.0, "weight_decay": 0.0},
+                {"params": pttsa_params, "lr": config.ttt.base_learning_rate * 2.5, "weight_decay": 0.0},
                 {"params": network_params, "lr": config.ttt.base_learning_rate, "weight_decay": 1e-4},
             ],
             fused=use_fused,
@@ -275,7 +286,7 @@ class TransductiveOperatorAdapter:
         sep_line = "=" * 60
         banner = (
             f"{sep_line}\n"
-            f"   [FGNS v4.1.0 TRANSDUCTIVE ADAPTER] Task: {task.task_id} | Pairs: {total_train_pairs} | Budget: {time_budget_secs}s\n"
+            f"   [FGNS v4.5.0 TRANSDUCTIVE ADAPTER] Task: {task.task_id} | Pairs: {total_train_pairs} | Budget: {time_budget_secs}s\n"
             f"{sep_line}\n"
         )
         print(banner, end="")
@@ -285,7 +296,12 @@ class TransductiveOperatorAdapter:
         pttsa_warmup_steps = min(15, config.ttt.pttsa_steps)
 
         amp_device = "cuda" if device.type == "cuda" else "cpu"
-        amp_enabled = config.hardware.enable_bf16_amp and (device.type == "cuda")
+        amp_enabled = (
+            config.hardware.enable_bf16_amp
+            and (device.type == "cuda")
+            and torch.cuda.is_available()
+            and (torch.cuda.get_device_capability(device)[0] >= 8)
+        )
 
         (
             init_solved,
@@ -309,7 +325,7 @@ class TransductiveOperatorAdapter:
             polished_mdl_snap = initial_snap
             post_consensus_remaining = min(20, config.ttt.post_consensus_polish_steps)
             print(
-                f"   🏆 [ZERO-SHOT ANALYTICAL CONSENSUS LOCKED] All {total_train_pairs} folds solved at step 0 "
+                f"   [*] [ZERO-SHOT ANALYTICAL CONSENSUS LOCKED] All {total_train_pairs} folds solved at step 0 "
                 f"(Loss: {init_loss:.4f})! Executing rapid 20-step MDL polish...\n"
             )
 
@@ -332,23 +348,20 @@ class TransductiveOperatorAdapter:
             )
 
             if step <= pttsa_warmup_steps:
-                optimizer.param_groups[0]["lr"] = config.ttt.base_learning_rate * 4.5
-                optimizer.param_groups[1]["lr"] = current_lr * 0.25
+                optimizer.param_groups[0]["lr"] = config.ttt.base_learning_rate * 3.5
+                optimizer.param_groups[1]["lr"] = current_lr * 0.35
             else:
-                optimizer.param_groups[0]["lr"] = current_lr * 1.5
-                optimizer.param_groups[1]["lr"] = current_lr * 0.75
+                optimizer.param_groups[0]["lr"] = current_lr * 1.25
+                optimizer.param_groups[1]["lr"] = current_lr * 0.85
 
             tau = config.compute_cooling_temperature(step=step, total_steps=max_steps)
 
             sym_step = D4Group.ALL[step % 8]
 
-            """
-            D4 x S9 Color-Permutation Automorphism Regularization:
-            Samples a stochastic non-background color permutation pi_t in S9 during exploration steps
-            so the network cannot memorize static color IDs, while anchoring on identity every 3rd step
-            and during post-consensus polish!
-            """
-            if use_s9_colors and (not consensus_engaged) and (step % 3 != 0) and (random.random() < s9_prob):
+            is_color_permuted_step = (
+                use_s9_colors and (not consensus_engaged) and (step % 3 != 0) and (random.random() < s9_prob)
+            )
+            if is_color_permuted_step:
                 step_color_map = ColorPermutation.random(preserve_background=True)
             else:
                 step_color_map = canonical_color_map
@@ -381,22 +394,27 @@ class TransductiveOperatorAdapter:
                     batch,
                     tau=tau,
                     current_step_ratio=progress,
-                    rule_perturbation=model.pttsa_rule_delta,
+                    rule_perturbation=None if is_color_permuted_step else model.pttsa_rule_delta,
                 )
 
-                operator_matrices = cls._extract_core_operator_matrices(model)
+                current_ops = cls._extract_core_operator_matrices(model)
+                operator_deltas = [
+                    w_curr - w_init for w_curr, w_init in zip(current_ops, initial_operator_refs)
+                ]
                 proto_loss = model.projector.palette.compute_orthogonality_loss()
 
                 telemetry = loss_engine(
                     output=output,
                     batch=batch,
-                    adaptation_deltas=operator_matrices,
+                    adaptation_deltas=operator_deltas,
                     prototype_ortho_loss=proto_loss,
                 )
                 loss = telemetry.total_loss
 
             if not torch.isnan(loss) and not torch.isinf(loss):
                 loss.backward()
+                if is_color_permuted_step and model.pttsa_rule_delta.grad is not None:
+                    model.pttsa_rule_delta.grad.zero_()
                 for p in pttsa_params + network_params:
                     if p.grad is not None:
                         torch.nan_to_num_(p.grad, nan=0.0, posinf=1.0, neginf=-1.0)
@@ -470,7 +488,7 @@ class TransductiveOperatorAdapter:
                     first_consensus_snap = current_snap
                     polished_mdl_snap = current_snap
                     print(
-                        f"   🏆 [FIRST CONSENSUS LOCKED FOR ATTEMPT 1] Solved all {total_train_pairs} folds under D4 invariance at step {step:,}! "
+                        f"   [*] [FIRST CONSENSUS LOCKED FOR ATTEMPT 1] Solved all {total_train_pairs} folds under D4 invariance at step {step:,}! "
                         f"Commencing Spectral MDL polish for Attempt 2...\n"
                     )
 
@@ -488,7 +506,10 @@ class TransductiveOperatorAdapter:
         model_polished.pttsa_so3_omega = nn.Parameter(polished_mdl_snap[2].clone())
 
         if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
 
         return model_first, model_polished
 
@@ -530,4 +551,3 @@ def verify_operator_adapter_diagnostics() -> bool:
         return False
 
     return True
-

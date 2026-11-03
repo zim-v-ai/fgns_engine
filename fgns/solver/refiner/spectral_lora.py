@@ -227,4 +227,12 @@ def verify_spectral_lora_diagnostics() -> bool:
     if unmerged_diff > 1e-5:
         return False
 
+    """4. Full Network Injection Verification (All 6 Target Submodules)"""
+    from fgns.config import FGNSConfig
+
+    net = FinslerGaugeSheafNetwork(FGNSConfig())
+    injected = inject_spectral_adapters(net, rank=rank, alpha=2.0)
+    if len(injected) != 6:
+        return False
+
     return True

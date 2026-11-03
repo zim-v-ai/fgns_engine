@@ -55,6 +55,10 @@ artifacts/logs/*.jsonl
 !artifacts/logs/ablations/
 !artifacts/logs/ablations/**
 
+# Generated Kaggle zip archive & local submission output
+artifacts/kaggle_bundle/*.zip
+submission.json
+
 # Virtual environments
 .venv/
 venv/

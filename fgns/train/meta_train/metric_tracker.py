@@ -1,13 +1,11 @@
 """
 Location: // fgns_engine/fgns/train/meta_train/metric_tracker.py
-Description: SOTA Forensic 8-Channel Multi-Head Telemetry Dashboard with Dual Count/Percentage Reporting.
-             Core Metrological Architecture for FGNS v1.3.0 (Omega-NA3D):
+Description: SOTA Forensic 8-Channel Multi-Head Telemetry Dashboard with Active 10-Color
+             Simplex Argmax & Dual Count/Percentage Reporting (FGNS v4.4.0):
                1. Complete 8-channel Kendall multitask loss accumulation including True XOR parity.
-               2. Honest Foreground Entity Accuracy (Pxl_FG) completely eliminating background cheating.
-               3. Dual Count & Percentage Reporting for Ext_Full, Ext_FG, and Bdg_Acc in training logs.
-               4. Active canvas boundary segmentation IoU and Shannon gradient energy entropy tracking.
-Invariants: Exact percentage bounds [0.0, 100.0]%, zero division safety on empty foreground masks,
-            loss accumulation strictly non-negative, zero hash comment compliance.
+               2. Exact 10-color active-domain argmax (logits[..., :10]) inside target masks,
+                  synchronizing training/validation telemetry 100% with tournament inference!
+               3. Dual Count & Percentage Reporting for Ext_Full, Ext_FG, and Bdg_Acc.
 Language: Python 3.12+ / Metrological Science sm_120 Aligned
 Compliance: Zero-Hash Directives Strictly Enforced (Exclusively Docstrings for Comments)
 """
@@ -106,9 +104,10 @@ class FullDashboardMetricTracker:
         in_masks = batch.query.in_masks
 
         B, H, W, V = q_logits.shape
+        c_dim = min(10, V)
 
         if q_targets is not None and q_masks is not None:
-            q_preds = torch.argmax(q_logits, dim=-1)
+            q_preds = torch.argmax(q_logits[..., :c_dim], dim=-1)
             q_is_correct = (q_preds == q_targets) & q_masks
 
             self.query_correct_pixels += float(q_is_correct.sum().item())
@@ -125,7 +124,7 @@ class FullDashboardMetricTracker:
             q_fg_correct = None
 
         if s_targets is not None and s_masks is not None:
-            s_preds = torch.argmax(s_logits, dim=-1)
+            s_preds = torch.argmax(s_logits[..., :c_dim], dim=-1)
             s_correct = (s_preds == s_targets) & s_masks
 
             self.support_correct_pixels += float(s_correct.sum().item())
@@ -215,9 +214,6 @@ class FullDashboardMetricTracker:
         elapsed_time: float,
         vram_mb: float = 0.0,
     ) -> str:
-        """
-        Synthesizes standardized single-line console progress telemetry displaying both counts and percentages.
-        """
         summary = self.get_summary()
         tps = float(tasks_processed) / max(0.1, elapsed_time)
 

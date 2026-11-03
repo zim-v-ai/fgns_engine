@@ -1,12 +1,15 @@
 """
 Location: // fgns_engine/fgns/models/size_predictor/boundary_size_predictor.py
-Description: Universal Riemannian-Finsler Cumulative Metric Time & Stokes Boundary Flux Integrator
-             (BoundaryMetricSizePredictor - FGNS v4.1.0 Academic Standard):
-               1. Unified Proper-Time Equation: Tau_Y(y) = sum_{u<=y} mu_Y(u), Tau_X(x) = sum_{v<=x} mu_X(v),
-                  yielding H_out = round(Tau_Y(H_in - 1)) and W_out = round(Tau_X(W_in - 1)).
-               2. Continuous Proper-Time Pullback Kernel W_pullback((y', x') <- (y, x)) via smooth
-                  Gaussian inversion of the monotone cumulative metric time map.
-               3. Subgroup Non-Degeneracy Guard preventing transpose collision on square isometries (Task 142ca369).
+Description: Universal 1-Jet Stokes & Coupled Boltzmann-Woodbury Dimension Predictor
+             (BoundaryMetricSizePredictor - FGNS v4.4.0 Academic Standard):
+               1. Vectorized Per-Color Extremal Sub-Mask Extractor (extract_extremal_color_bbox_dimensions):
+                  extracts both Largest-Object BBox (L_max_col) and Smallest-Pattern BBox (L_min_col)
+                  in a single 4D one-hot pass with zero loops!
+               2. Coupled Boltzmann-Gibbs & Woodbury-Tikhonov 1-Jet Operator: each geometric law votes
+                  at its exact integer displacement peak in Z_61 (preventing multi-law averaging blur),
+                  while the continuous Woodbury-Sherman-Morrison integral handles composite warps!
+               3. Strict Occam Prior Hierarchy: Transpose (W_in) is suppressed when inputs are square
+                  or isometric, and Occluder crops require verified color annihilation.
 Language: Python 3.12+ / PyTorch 2.5+ / Autonomous Differential Geometry sm_120 Aligned
 Compliance: Zero-Hash Directives Strictly Enforced (Exclusively Docstrings for Comments)
 """
@@ -14,7 +17,7 @@ Compliance: Zero-Hash Directives Strictly Enforced (Exclusively Docstrings for C
 from __future__ import annotations
 
 import math
-from typing import Final, List, Optional, Sequence, Tuple, Union, cast
+from typing import Final, Optional, Tuple, cast
 
 import torch
 import torch.nn as nn
@@ -27,17 +30,18 @@ from fgns.models.size_predictor.harmonic_fiber import HarmonicGeometricFiber
 from fgns.models.size_predictor.support_inductor import SupportDemonstrationSizeInductor
 from fgns.primitives.safe_math import safe_log
 from fgns.primitives.stiefel_sheaf import NA3DFinslerLieEngine
-from fgns.primitives.swiglu import RMSNorm, TopologicalBypassFeedForward
+from fgns.primitives.swiglu import TopologicalBypassFeedForward
 from fgns.types import FrameBoundaryState
 
 DEFAULT_ZERO_SHIFT_INDEX: Final[int] = 30
 DEFAULT_RELATIVE_CLASSES: Final[int] = 61
 DEFAULT_MAX_CANVAS_DIM: Final[int] = 30
+WOODBURY_TIKHONOV_REG: Final[float] = 1e-3
 
 
 class BoundaryMetricSizePredictor(nn.Module):
     """
-    Universal Riemannian-Finsler Metric Time & Stokes Boundary Flux Dimension Predictor.
+    Universal 1-Jet Stokes & Coupled Boltzmann-Woodbury Integrator for Canvas Dimension Prediction.
     """
 
     ZERO_SHIFT_INDEX: int = DEFAULT_ZERO_SHIFT_INDEX
@@ -52,13 +56,11 @@ class BoundaryMetricSizePredictor(nn.Module):
         num_heads = config.size_oracle.num_envelope_heads
 
         self.envelope_pooler = SpatialEnvelopeAttentionPooler(d_model=d_model, num_heads=num_heads)
-
         self.harmonic_fiber = HarmonicGeometricFiber(
             d_out=d_fiber,
             num_frequencies=config.size_oracle.num_harmonic_frequencies,
             max_extent=float(self.MAX_CANVAS_DIM),
         )
-
         self.support_inductor = SupportDemonstrationSizeInductor(d_model=d_model)
         self.rule_modulator = CartanRuleModulator(d_model=d_model)
 
@@ -66,16 +68,10 @@ class BoundaryMetricSizePredictor(nn.Module):
         self.context_ffn = nn.Sequential(
             nn.Linear(total_in_dim, d_model, bias=True),
             nn.SiLU(),
-            TopologicalBypassFeedForward(
-                d_model=d_model,
-                expansion_factor=2.0,
-                alignment_multiple=32,
-            ),
+            TopologicalBypassFeedForward(d_model=d_model, expansion_factor=2.0, alignment_multiple=32),
         )
 
-        """Neural Per-Pixel Metric Density Field Projector: synthesizes local dilation (mu_Y(y,x), mu_X(y,x))"""
         self.metric_density_head = nn.Linear(d_model, 2, bias=True)
-
         self.na3d_anisotropy_proj = nn.Linear(24, d_model, bias=False)
         self.head_rel_h = nn.Linear(d_model, self.RELATIVE_CLASSES, bias=True)
         self.head_rel_w = nn.Linear(d_model, self.RELATIVE_CLASSES, bias=True)
@@ -83,12 +79,10 @@ class BoundaryMetricSizePredictor(nn.Module):
 
         self.head_terminal_h = nn.Linear(d_model, self.RELATIVE_CLASSES, bias=False)
         self.head_terminal_w = nn.Linear(d_model, self.RELATIVE_CLASSES, bias=False)
-        self.terminal_gate = nn.Parameter(torch.tensor(0.35, dtype=torch.float32))
-        self.carrier_mask_gain = nn.Parameter(torch.tensor(0.50, dtype=torch.float32))
+        self.terminal_gate = nn.Parameter(torch.tensor(0.25, dtype=torch.float32))
+        self.carrier_mask_gain = nn.Parameter(torch.tensor(0.35, dtype=torch.float32))
 
-        class_indices = torch.arange(self.RELATIVE_CLASSES, dtype=torch.float32)
-        self.register_buffer("class_indices", class_indices, persistent=False)
-
+        self.register_buffer("class_indices", torch.arange(self.RELATIVE_CLASSES, dtype=torch.float32), persistent=False)
         self.latest_min_err_h: Optional[torch.Tensor] = None
         self.latest_min_err_w: Optional[torch.Tensor] = None
 
@@ -107,10 +101,11 @@ class BoundaryMetricSizePredictor(nn.Module):
 
     @classmethod
     def extract_input_dimensions(cls, mask: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        mask_f32 = mask.float()
-        h_in = mask_f32.max(dim=-1)[0].sum(dim=-1).to(torch.int64).clamp_min(1)
-        w_in = mask_f32.max(dim=-2)[0].sum(dim=-1).to(torch.int64).clamp_min(1)
-        return h_in, w_in
+        m_f = mask.float()
+        return (
+            m_f.max(dim=-1)[0].sum(dim=-1).to(torch.int64).clamp_min(1),
+            m_f.max(dim=-2)[0].sum(dim=-1).to(torch.int64).clamp_min(1),
+        )
 
     @classmethod
     def compute_proper_time_pullback_kernel(
@@ -120,42 +115,27 @@ class BoundaryMetricSizePredictor(nn.Module):
         h_field: torch.Tensor,
         sigma_tau: float = 0.45,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Implements the Universal Proper-Time Coordinate Pullback Equation:
-            Tau_Y(y) = sum_{u=0}^y mu_Y(u),   Tau_X(x) = sum_{v=0}^x mu_X(v)
-            W_pullback((y', x') <- (y, x)) =
-                mu_Y(y) mu_X(x) exp( - ((Tau_Y(y) - 0.5 mu_Y(y) - (y' + 0.5))^2 + (Tau_X(x) - 0.5 mu_X(x) - (x' + 0.5))^2) / (2 sigma_tau^2) ) / Z.
-        Automatically performs frame cropping, empty row/column deletion, and non-linear dilation!
-        """
-        N, H, W, D = h_field.shape
-        device = h_field.device
-        dtype = h_field.dtype
+        N, H, W, _ = h_field.shape
+        device, dtype = h_field.device, h_field.dtype
 
-        mu_y_f32 = mu_y.to(torch.float32).clamp_min(0.0).view(N, H)
-        mu_x_f32 = mu_x.to(torch.float32).clamp_min(0.0).view(N, W)
+        mu_y_f = mu_y.to(torch.float32).clamp_min(0.0).view(N, H)
+        mu_x_f = mu_x.to(torch.float32).clamp_min(0.0).view(N, W)
+        tau_y = torch.cumsum(mu_y_f, dim=-1)
+        tau_x = torch.cumsum(mu_x_f, dim=-1)
 
-        tau_y = torch.cumsum(mu_y_f32, dim=-1)
-        tau_x = torch.cumsum(mu_x_f32, dim=-1)
+        cy = (tau_y - 0.50 * mu_y_f).unsqueeze(1)
+        cx = (tau_x - 0.50 * mu_x_f).unsqueeze(1)
+        ty = (torch.arange(H, device=device, dtype=torch.float32) + 0.50).view(1, H, 1)
+        tx = (torch.arange(W, device=device, dtype=torch.float32) + 0.50).view(1, W, 1)
 
-        center_tau_y = (tau_y - 0.50 * mu_y_f32).unsqueeze(1)
-        center_tau_x = (tau_x - 0.50 * mu_x_f32).unsqueeze(1)
+        inv_2s2 = 1.0 / (2.0 * max(float(sigma_tau), 0.10) ** 2)
+        ky = mu_y_f.unsqueeze(1) * torch.exp(-((cy - ty).pow(2)) * inv_2s2)
+        kx = mu_x_f.unsqueeze(1) * torch.exp(-((cx - tx).pow(2)) * inv_2s2)
+        ky = ky / ky.sum(dim=-1, keepdim=True).clamp_min(1e-6)
+        kx = kx / kx.sum(dim=-1, keepdim=True).clamp_min(1e-6)
 
-        target_centers_y = (torch.arange(H, device=device, dtype=torch.float32) + 0.50).view(1, H, 1)
-        target_centers_x = (torch.arange(W, device=device, dtype=torch.float32) + 0.50).view(1, W, 1)
-
-        inv_two_sig_sq = 1.0 / (2.0 * max(float(sigma_tau), 0.10) ** 2)
-
-        kern_y = mu_y_f32.unsqueeze(1) * torch.exp(-((center_tau_y - target_centers_y).pow(2)) * inv_two_sig_sq)
-        kern_y = kern_y / kern_y.sum(dim=-1, keepdim=True).clamp_min(1e-6)
-
-        kern_x = mu_x_f32.unsqueeze(1) * torch.exp(-((center_tau_x - target_centers_x).pow(2)) * inv_two_sig_sq)
-        kern_x = kern_x / kern_x.sum(dim=-1, keepdim=True).clamp_min(1e-6)
-
-        """Factored 2D Proper-Time Pullback Contraction: W_Y @ H_in @ W_X^T"""
-        h_f32 = h_field.to(torch.float32)
-        pulled_y = torch.einsum("nyu,nuwd->nywd", kern_y, h_f32)
-        pulled_yx = torch.einsum("nxv,nyvd->nyxd", kern_x, pulled_y)
-
+        pulled_y = torch.einsum("nyu,nuwd->nywd", ky, h_field.to(torch.float32))
+        pulled_yx = torch.einsum("nxv,nyvd->nyxd", kx, pulled_y)
         return pulled_yx.to(dtype), tau_y, tau_x
 
     @classmethod
@@ -167,39 +147,27 @@ class BoundaryMetricSizePredictor(nn.Module):
     ) -> FrameBoundaryState:
         B, H, W = active_mask.shape
         device = active_mask.device
-        psi_2d = carrier_psi.view(B, H, W).to(torch.float32)
-        m_field = torch.sigmoid(torch.clamp(psi_2d, -12.0, 12.0)) * active_mask.float()
+        m_field = torch.sigmoid(torch.clamp(carrier_psi.view(B, H, W).to(torch.float32), -12.0, 12.0)) * active_mask.float()
 
-        safe_tau = max(float(tau_stokes), 1e-3)
-        m_y = (safe_tau * torch.logsumexp(m_field / safe_tau, dim=-1) - safe_tau * math.log(float(max(1, W)))).clamp(0.0, 1.0)
-        m_x = (safe_tau * torch.logsumexp(m_field / safe_tau, dim=-2) - safe_tau * math.log(float(max(1, H)))).clamp(0.0, 1.0)
+        st = max(float(tau_stokes), 1e-3)
+        m_y = (st * torch.logsumexp(m_field / st, dim=-1) - st * math.log(float(max(1, W)))).clamp(0.0, 1.0)
+        m_x = (st * torch.logsumexp(m_field / st, dim=-2) - st * math.log(float(max(1, H)))).clamp(0.0, 1.0)
 
-        m_y_pad = F.pad(m_y, (1, 1), mode="constant", value=0.0)
-        flux_y_plus = F.relu(m_y - m_y_pad[:, :-2])
-        flux_y_minus = F.relu(m_y - m_y_pad[:, 2:])
+        my_p = F.pad(m_y, (1, 1), mode="constant", value=0.0)
+        mx_p = F.pad(m_x, (1, 1), mode="constant", value=0.0)
+        fy_pos, fy_neg = F.relu(m_y - my_p[:, :-2]), F.relu(m_y - my_p[:, 2:])
+        fx_pos, fx_neg = F.relu(m_x - mx_p[:, :-2]), F.relu(m_x - mx_p[:, 2:])
 
-        m_x_pad = F.pad(m_x, (1, 1), mode="constant", value=0.0)
-        flux_x_plus = F.relu(m_x - m_x_pad[:, :-2])
-        flux_x_minus = F.relu(m_x - m_x_pad[:, 2:])
-
-        y_coords = torch.arange(H, device=device, dtype=torch.float32).unsqueeze(0)
-        x_coords = torch.arange(W, device=device, dtype=torch.float32).unsqueeze(0)
-
-        y_min = torch.sum(y_coords * flux_y_plus, dim=-1) / (torch.sum(flux_y_plus, dim=-1) + 1e-6)
-        y_max = torch.sum(y_coords * flux_y_minus, dim=-1) / (torch.sum(flux_y_minus, dim=-1) + 1e-6)
-        x_min = torch.sum(x_coords * flux_x_plus, dim=-1) / (torch.sum(flux_x_plus, dim=-1) + 1e-6)
-        x_max = torch.sum(x_coords * flux_x_minus, dim=-1) / (torch.sum(flux_x_minus, dim=-1) + 1e-6)
-
-        tau_y = torch.cumsum(m_y, dim=-1)
-        tau_x = torch.cumsum(m_x, dim=-1)
+        yc = torch.arange(H, device=device, dtype=torch.float32).unsqueeze(0)
+        xc = torch.arange(W, device=device, dtype=torch.float32).unsqueeze(0)
 
         return FrameBoundaryState(
-            y_min=y_min,
-            y_max=y_max,
-            x_min=x_min,
-            x_max=x_max,
-            tau_y=tau_y,
-            tau_x=tau_x,
+            y_min=torch.sum(yc * fy_pos, dim=-1) / (torch.sum(fy_pos, dim=-1) + 1e-6),
+            y_max=torch.sum(yc * fy_neg, dim=-1) / (torch.sum(fy_neg, dim=-1) + 1e-6),
+            x_min=torch.sum(xc * fx_pos, dim=-1) / (torch.sum(fx_pos, dim=-1) + 1e-6),
+            x_max=torch.sum(xc * fx_neg, dim=-1) / (torch.sum(fx_neg, dim=-1) + 1e-6),
+            tau_y=torch.cumsum(m_y, dim=-1),
+            tau_x=torch.cumsum(m_x, dim=-1),
         )
 
     @classmethod
@@ -210,23 +178,25 @@ class BoundaryMetricSizePredictor(nn.Module):
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         H, W = target_mask_bool.shape[-2], target_mask_bool.shape[-1]
         device = target_mask_bool.device
-
         has_any = target_mask_bool.any(dim=-1).any(dim=-1)
-        y_idx = torch.arange(H, device=device, dtype=torch.int64).view(*([1] * (target_mask_bool.ndim - 2)), H, 1)
-        x_idx = torch.arange(W, device=device, dtype=torch.int64).view(*([1] * (target_mask_bool.ndim - 2)), 1, W)
 
-        y_min_raw = torch.where(target_mask_bool, y_idx, torch.full_like(y_idx, H)).amin(dim=(-2, -1))
-        y_max_raw = torch.where(target_mask_bool, y_idx, torch.full_like(y_idx, -1)).amax(dim=(-2, -1))
-        x_min_raw = torch.where(target_mask_bool, x_idx, torch.full_like(x_idx, W)).amin(dim=(-2, -1))
-        x_max_raw = torch.where(target_mask_bool, x_idx, torch.full_like(x_idx, -1)).amax(dim=(-2, -1))
+        yi = torch.arange(H, device=device, dtype=torch.int64).view(*([1] * (target_mask_bool.ndim - 2)), H, 1)
+        xi = torch.arange(W, device=device, dtype=torch.int64).view(*([1] * (target_mask_bool.ndim - 2)), 1, W)
+
+        ymin = torch.where(target_mask_bool, yi, torch.full_like(yi, H)).amin(dim=(-2, -1))
+        ymax = torch.where(target_mask_bool, yi, torch.full_like(yi, -1)).amax(dim=(-2, -1))
+        xmin = torch.where(target_mask_bool, xi, torch.full_like(xi, W)).amin(dim=(-2, -1))
+        xmax = torch.where(target_mask_bool, xi, torch.full_like(xi, -1)).amax(dim=(-2, -1))
 
         h_in, w_in = cls.extract_input_dimensions(fallback_mask)
-        h_box = torch.where(has_any, (y_max_raw - y_min_raw + 1).clamp(1, cls.MAX_CANVAS_DIM), h_in)
-        w_box = torch.where(has_any, (x_max_raw - x_min_raw + 1).clamp(1, cls.MAX_CANVAS_DIM), w_in)
-        y0 = torch.where(has_any, y_min_raw.clamp(0, H - 1), torch.zeros_like(h_in))
-        x0 = torch.where(has_any, x_min_raw.clamp(0, W - 1), torch.zeros_like(w_in))
-
-        return h_box, w_box, y0, x0
+        h_box = torch.where(has_any, (ymax - ymin + 1).clamp(1, cls.MAX_CANVAS_DIM), h_in)
+        w_box = torch.where(has_any, (xmax - xmin + 1).clamp(1, cls.MAX_CANVAS_DIM), w_in)
+        return (
+            h_box,
+            w_box,
+            torch.where(has_any, ymin.clamp(0, H - 1), torch.zeros_like(h_in)),
+            torch.where(has_any, xmin.clamp(0, W - 1), torch.zeros_like(w_in)),
+        )
 
     @classmethod
     def extract_foreground_bbox_dimensions(
@@ -234,9 +204,63 @@ class BoundaryMetricSizePredictor(nn.Module):
         grid: torch.Tensor,
         mask: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        is_fg = (grid > 0) & (grid < 10) & mask
-        h_box, w_box, _, _ = cls._compute_mask_bbox_dims(is_fg, mask)
+        h_box, w_box, _, _ = cls._compute_mask_bbox_dims((grid > 0) & (grid < 10) & mask, mask)
         return h_box, w_box
+
+    @classmethod
+    def extract_extremal_color_bbox_dimensions(
+        cls,
+        grid: torch.Tensor,
+        mask: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Vectorized Per-Color Sub-Mask Bounding Box Extractor:
+        Extracts the bounding box dimensions (H_max_col, W_max_col) of the largest non-background
+        sub-canvas color object and (H_min_col, W_min_col) of the smallest non-trivial color object!
+        """
+        orig_batch = grid.shape[:-2]
+        H, W = grid.shape[-2], grid.shape[-1]
+        device = grid.device
+
+        g_f = grid.reshape(-1, H, W)
+        m_f = mask.reshape(-1, H, W)
+        N = g_f.shape[0]
+        h_in, w_in = cls.extract_input_dimensions(m_f)
+
+        oh = (F.one_hot(g_f.clamp(0, 9), 10).bool()) & m_f.unsqueeze(-1)
+        oh[:, :, :, 0] = False
+
+        yi = torch.arange(H, device=device, dtype=torch.int64).view(1, H, 1, 1)
+        xi = torch.arange(W, device=device, dtype=torch.int64).view(1, 1, W, 1)
+
+        ymin = torch.where(oh, yi, torch.full_like(yi, H)).amin(dim=(1, 2))
+        ymax = torch.where(oh, yi, torch.full_like(yi, -1)).amax(dim=(1, 2))
+        xmin = torch.where(oh, xi, torch.full_like(xi, W)).amin(dim=(1, 2))
+        xmax = torch.where(oh, xi, torch.full_like(xi, -1)).amax(dim=(1, 2))
+
+        hc = (ymax - ymin + 1).clamp(1, cls.MAX_CANVAS_DIM)
+        wc = (xmax - xmin + 1).clamp(1, cls.MAX_CANVAS_DIM)
+        mass_c = oh.float().sum(dim=(1, 2))
+
+        is_sub_canvas = (mass_c >= 2.0) & ((hc < h_in.unsqueeze(-1)) | (wc < w_in.unsqueeze(-1)))
+        valid_c = torch.where(is_sub_canvas, mass_c, torch.zeros_like(mass_c))
+        has_sub = is_sub_canvas.any(dim=-1)
+
+        max_idx = torch.argmax(valid_c, dim=-1, keepdim=True)
+        h_max_c = torch.where(has_sub, torch.gather(hc, 1, max_idx).squeeze(-1), h_in)
+        w_max_c = torch.where(has_sub, torch.gather(wc, 1, max_idx).squeeze(-1), w_in)
+
+        min_cand = torch.where(is_sub_canvas, mass_c, torch.full_like(mass_c, 1e9))
+        min_idx = torch.argmin(min_cand, dim=-1, keepdim=True)
+        h_min_c = torch.where(has_sub, torch.gather(hc, 1, min_idx).squeeze(-1), h_in)
+        w_min_c = torch.where(has_sub, torch.gather(wc, 1, min_idx).squeeze(-1), w_in)
+
+        return (
+            h_max_c.view(*orig_batch),
+            w_max_c.view(*orig_batch),
+            h_min_c.view(*orig_batch),
+            w_min_c.view(*orig_batch),
+        )
 
     @classmethod
     def extract_vanishing_occluder_bbox(
@@ -249,58 +273,45 @@ class BoundaryMetricSizePredictor(nn.Module):
         support_out_masks: Optional[torch.Tensor] = None,
         pair_valid_mask: Optional[torch.Tensor] = None,
     ) -> Tuple[
-        torch.Tensor,
-        torch.Tensor,
-        torch.Tensor,
-        torch.Tensor,
-        torch.Tensor,
-        torch.Tensor,
-        torch.Tensor,
-        torch.Tensor,
+        torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor,
+        torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor,
     ]:
-        B, K, H, W = support_inputs.shape
-        device = query_inputs.device
+        B, K, _, _ = support_inputs.shape
+        v_m = (
+            pair_valid_mask.to(torch.float32).unsqueeze(-1)
+            if pair_valid_mask is not None
+            else support_in_masks.any(dim=-1).any(dim=-1).to(torch.float32).unsqueeze(-1)
+        )
+        v_denom = v_m.sum(dim=1).clamp_min(1.0)
 
-        if pair_valid_mask is not None:
-            v_mask = pair_valid_mask.to(torch.float32)
+        q_oh = F.one_hot(query_inputs.clamp(0, 9), 10).float() * query_in_masks.float().unsqueeze(-1)
+        s_in_oh = F.one_hot(support_inputs.clamp(0, 9), 10).float() * support_in_masks.float().unsqueeze(-1)
+
+        q_cnt = q_oh.sum(dim=(1, 2))
+        s_in_cnt = s_in_oh.sum(dim=(2, 3)) * v_m
+        q_has = q_cnt > 0.5
+        s_has_rate = ((s_in_cnt > 0.5).float() * v_m).sum(dim=1) / v_denom
+
+        if support_outputs is not None and support_out_masks is not None:
+            s_out_oh = F.one_hot(support_outputs.clamp(0, 9), 10).float() * support_out_masks.float().unsqueeze(-1)
+            s_out_cnt = s_out_oh.sum(dim=(2, 3)) * v_m
+            s_van_rate = (((s_out_cnt == 0.0) & (s_in_cnt > 0.5)).float() * v_m).sum(dim=1) / v_denom
+            valid_c = q_has & (s_has_rate > 0.5) & (s_van_rate > 0.5)
         else:
-            v_mask = support_in_masks.any(dim=-1).any(dim=-1).to(torch.float32)
+            s_van_rate = torch.zeros_like(q_cnt)
+            valid_c = q_has & (s_has_rate > 0.5)
 
-        c_scores = torch.full((B, 10), -1e9, dtype=torch.float32, device=device)
+        valid_c[:, 0] = False
+        scores = torch.where(valid_c, (10.0 * s_van_rate) + (1.0 / (q_cnt + 1.0)), torch.full_like(q_cnt, -1e9))
+        max_sc, occ_col = torch.max(scores, dim=-1)
+        has_occ = max_sc > 0.0
 
-        for c in range(1, 10):
-            q_has_c = ((query_inputs == c) & query_in_masks).any(dim=-1).any(dim=-1).to(torch.float32)
-            s_in_cnt = (((support_inputs == c) & support_in_masks).sum(dim=(-2, -1)).to(torch.float32) * v_mask)
-            s_has_in = ((s_in_cnt > 0).to(torch.float32) * v_mask).sum(dim=-1) / v_mask.sum(dim=-1).clamp_min(1.0)
+        q_occ = (query_inputs == occ_col.view(B, 1, 1)) & query_in_masks & has_occ.view(B, 1, 1)
+        s_occ = (support_inputs == occ_col.view(B, 1, 1, 1)) & support_in_masks & has_occ.view(B, 1, 1, 1)
 
-            if support_outputs is not None and support_out_masks is not None:
-                s_out_cnt = (((support_outputs == c) & support_out_masks).sum(dim=(-2, -1)).to(torch.float32) * v_mask)
-                s_vanishes = ((s_out_cnt == 0).to(torch.float32) * (s_in_cnt > 0).to(torch.float32) * v_mask).sum(dim=-1) / v_mask.sum(dim=-1).clamp_min(1.0)
-            else:
-                s_vanishes = torch.zeros_like(q_has_c)
-
-            q_cnt = ((query_inputs == c) & query_in_masks).sum(dim=(-2, -1)).to(torch.float32)
-            rarity_bonus = 1.0 / (q_cnt + 1.0)
-
-            """Require actual vanishing diode behavior (s_vanishes > 0.5) when outputs are provided"""
-            if support_outputs is not None and support_out_masks is not None:
-                valid_occ = (q_has_c > 0.5) & (s_has_in > 0.5) & (s_vanishes > 0.5)
-            else:
-                valid_occ = (q_has_c > 0.5) & (s_has_in > 0.5)
-
-            score_c = (10.0 * s_vanishes) + rarity_bonus
-            c_scores[:, c] = torch.where(valid_occ, score_c, torch.full_like(score_c, -1e9))
-
-        max_occ_score, occ_color = torch.max(c_scores, dim=-1)
-        has_real_occ = max_occ_score > 0.0
-
-        q_is_occ = (query_inputs == occ_color.view(B, 1, 1)) & query_in_masks & has_real_occ.view(B, 1, 1)
-        s_is_occ = (support_inputs == occ_color.view(B, 1, 1, 1)) & support_in_masks & has_real_occ.view(B, 1, 1, 1)
-
-        q_h_occ, q_w_occ, q_y0_occ, q_x0_occ = cls._compute_mask_bbox_dims(q_is_occ, query_in_masks)
-        s_h_occ, s_w_occ, s_y0_occ, s_x0_occ = cls._compute_mask_bbox_dims(s_is_occ, support_in_masks)
-
-        return q_h_occ, q_w_occ, q_y0_occ, q_x0_occ, s_h_occ, s_w_occ, s_y0_occ, s_x0_occ
+        qh, qw, qy0, qx0 = cls._compute_mask_bbox_dims(q_occ, query_in_masks)
+        sh, sw, sy0, sx0 = cls._compute_mask_bbox_dims(s_occ, support_in_masks)
+        return qh, qw, qy0, qx0, sh, sw, sy0, sx0
 
     @classmethod
     def extract_chamber_divider_dimensions(
@@ -312,72 +323,45 @@ class BoundaryMetricSizePredictor(nn.Module):
         H, W = grid.shape[-2], grid.shape[-1]
         device = grid.device
 
-        g_flat = grid.reshape(-1, H, W)
-        m_flat = mask.reshape(-1, H, W)
-        N = g_flat.shape[0]
+        g_f = grid.reshape(-1, H, W)
+        m_f = mask.reshape(-1, H, W)
+        N = g_f.shape[0]
+        h_in, w_in = cls.extract_input_dimensions(m_f)
 
-        h_in, w_in = cls.extract_input_dimensions(m_flat)
-        y_idx = torch.arange(H, device=device, dtype=torch.int64).view(1, H)
-        x_idx = torch.arange(W, device=device, dtype=torch.int64).view(1, W)
+        yi = torch.arange(H, device=device, dtype=torch.int64).view(1, H)
+        xi = torch.arange(W, device=device, dtype=torch.int64).view(1, W)
 
-        interior_y = (y_idx >= 2) & (y_idx <= (h_in.unsqueeze(-1) - 3))
-        interior_x = (x_idx >= 2) & (x_idx <= (w_in.unsqueeze(-1) - 3))
+        row_u = (((g_f == g_f[:, :, 0:1]) & (g_f > 0) & m_f).sum(dim=-1) == w_in.unsqueeze(-1)) & (yi >= 2) & (yi <= h_in.unsqueeze(-1) - 3)
+        col_u = (((g_f == g_f[:, 0:1, :]) & (g_f > 0) & m_f).sum(dim=-2) == h_in.unsqueeze(-1)) & (xi >= 2) & (xi <= w_in.unsqueeze(-1) - 3)
 
-        first_col = g_flat[:, :, 0:1].expand(N, H, W)
-        row_uniform = (((g_flat == first_col) & (g_flat > 0) & m_flat).sum(dim=-1) == w_in.unsqueeze(-1)) & interior_y
-        row_is_div = row_uniform & (~row_uniform.all(dim=-1, keepdim=True))
+        row_div = row_u & (~row_u.all(dim=-1, keepdim=True))
+        col_div = col_u & (~col_u.all(dim=-1, keepdim=True))
 
-        first_row = g_flat[:, 0:1, :].expand(N, H, W)
-        col_uniform = (((g_flat == first_row) & (g_flat > 0) & m_flat).sum(dim=-2) == h_in.unsqueeze(-1)) & interior_x
-        col_is_div = col_uniform & (~col_uniform.all(dim=-1, keepdim=True))
+        nd_y, nd_x = row_div.sum(dim=-1), col_div.sum(dim=-1)
+        f_dy = torch.where(row_div, yi, torch.full_like(yi, H)).amin(dim=-1)
+        f_dx = torch.where(col_div, xi, torch.full_like(xi, W)).amin(dim=-1)
 
-        num_div_y = row_is_div.sum(dim=-1)
-        num_div_x = col_is_div.sum(dim=-1)
-
-        has_div_y = num_div_y > 0
-        has_div_x = num_div_x > 0
-
-        first_div_y = torch.where(row_is_div, y_idx, torch.full_like(y_idx, H)).amin(dim=-1)
-        first_div_x = torch.where(col_is_div, x_idx, torch.full_like(x_idx, W)).amin(dim=-1)
-
-        h_top = first_div_y.clamp_min(1)
-        h_bot = (h_in - 1 - first_div_y).clamp_min(1)
-        h_multi = torch.div(h_in - num_div_y, num_div_y + 1, rounding_mode="floor").clamp_min(1)
         h_cham = torch.where(
-            num_div_y == 1,
-            torch.maximum(h_top, h_bot),
-            torch.where(has_div_y, h_multi, h_in),
+            nd_y == 1,
+            torch.maximum(f_dy.clamp_min(1), (h_in - 1 - f_dy).clamp_min(1)),
+            torch.where(nd_y > 0, torch.div(h_in - nd_y, nd_y + 1, rounding_mode="floor").clamp_min(1), h_in),
         )
-
-        w_left = first_div_x.clamp_min(1)
-        w_right = (w_in - 1 - first_div_x).clamp_min(1)
-        w_multi = torch.div(w_in - num_div_x, num_div_x + 1, rounding_mode="floor").clamp_min(1)
         w_cham = torch.where(
-            num_div_x == 1,
-            torch.maximum(w_left, w_right),
-            torch.where(has_div_x, w_multi, w_in),
+            nd_x == 1,
+            torch.maximum(f_dx.clamp_min(1), (w_in - 1 - f_dx).clamp_min(1)),
+            torch.where(nd_x > 0, torch.div(w_in - nd_x, nd_x + 1, rounding_mode="floor").clamp_min(1), w_in),
         )
 
-        x_grid_2d = x_idx.unsqueeze(1).expand(N, H, W)
-        y_grid_2d = y_idx.unsqueeze(-1).expand(N, H, W)
-        is_fg = (g_flat > 0) & (g_flat < 10) & m_flat
+        is_fg = (g_f > 0) & (g_f < 10) & m_f
+        xg2, yg2 = xi.unsqueeze(1).expand(N, H, W), yi.unsqueeze(-1).expand(N, H, W)
+        l_fg = (is_fg & (xg2 < f_dx.view(N, 1, 1))).sum(dim=(-2, -1))
+        r_fg = (is_fg & (xg2 > f_dx.view(N, 1, 1))).sum(dim=(-2, -1))
+        t_fg = (is_fg & (yg2 < f_dy.view(N, 1, 1))).sum(dim=(-2, -1))
+        b_fg = (is_fg & (yg2 > f_dy.view(N, 1, 1))).sum(dim=(-2, -1))
 
-        left_fg = (is_fg & (x_grid_2d < first_div_x.view(N, 1, 1))).sum(dim=(-2, -1))
-        right_fg = (is_fg & (x_grid_2d > first_div_x.view(N, 1, 1))).sum(dim=(-2, -1))
-        choose_right = (num_div_x == 1) & (right_fg > 0) & (right_fg < left_fg)
-        x0_cham = torch.where(choose_right, (first_div_x + 1).clamp(0, W - 1), torch.zeros_like(w_in))
-
-        top_fg = (is_fg & (y_grid_2d < first_div_y.view(N, 1, 1))).sum(dim=(-2, -1))
-        bot_fg = (is_fg & (y_grid_2d > first_div_y.view(N, 1, 1))).sum(dim=(-2, -1))
-        choose_bot = (num_div_y == 1) & (bot_fg > 0) & (bot_fg < top_fg)
-        y0_cham = torch.where(choose_bot, (first_div_y + 1).clamp(0, H - 1), torch.zeros_like(h_in))
-
-        return (
-            h_cham.view(*orig_batch),
-            w_cham.view(*orig_batch),
-            y0_cham.view(*orig_batch),
-            x0_cham.view(*orig_batch),
-        )
+        x0_c = torch.where((nd_x == 1) & (r_fg > 0) & (r_fg < l_fg), (f_dx + 1).clamp(0, W - 1), torch.zeros_like(w_in))
+        y0_c = torch.where((nd_y == 1) & (b_fg > 0) & (b_fg < t_fg), (f_dy + 1).clamp(0, H - 1), torch.zeros_like(h_in))
+        return h_cham.view(*orig_batch), w_cham.view(*orig_batch), y0_c.view(*orig_batch), x0_c.view(*orig_batch)
 
     @classmethod
     def compute_soft_spatial_envelope(
@@ -393,158 +377,218 @@ class BoundaryMetricSizePredictor(nn.Module):
 
         with torch.amp.autocast(device_type=dev_type, enabled=False):
             h_in, w_in = cls.extract_input_dimensions(in_masks)
-            probs_h_rel = F.softmax(torch.clamp(h_rel_logits.to(torch.float32), -25.0, 25.0), dim=-1)
-            probs_w_rel = F.softmax(torch.clamp(w_rel_logits.to(torch.float32), -25.0, 25.0), dim=-1)
+            ph = F.softmax(torch.clamp(h_rel_logits.to(torch.float32), -25.0, 25.0), dim=-1)
+            pw = F.softmax(torch.clamp(w_rel_logits.to(torch.float32), -25.0, 25.0), dim=-1)
 
             shifts = torch.arange(cls.RELATIVE_CLASSES, device=device, dtype=torch.int64) - cls.ZERO_SHIFT_INDEX
-            abs_h_grid = (h_in.view(B, 1) + shifts.view(1, -1)).clamp(1, canvas_dim)
-            abs_w_grid = (w_in.view(B, 1) + shifts.view(1, -1)).clamp(1, canvas_dim)
+            ah = (h_in.view(B, 1) + shifts.view(1, -1)).clamp(1, canvas_dim)
+            aw = (w_in.view(B, 1) + shifts.view(1, -1)).clamp(1, canvas_dim)
 
-            coord_range = torch.arange(canvas_dim, device=device, dtype=torch.int64).view(1, canvas_dim, 1)
-            surv_h = torch.sum(probs_h_rel.unsqueeze(1) * (abs_h_grid.unsqueeze(1) > coord_range).float(), dim=-1)
-            surv_w = torch.sum(probs_w_rel.unsqueeze(1) * (abs_w_grid.unsqueeze(1) > coord_range).float(), dim=-1)
+            cr = torch.arange(canvas_dim, device=device, dtype=torch.int64).view(1, canvas_dim, 1)
+            sh = torch.sum(ph.unsqueeze(1) * (ah.unsqueeze(1) > cr).float(), dim=-1)
+            sw = torch.sum(pw.unsqueeze(1) * (aw.unsqueeze(1) > cr).float(), dim=-1)
 
-            p_env = (surv_h.unsqueeze(-1) * surv_w.unsqueeze(1)).clamp(1e-4, 1.0 - 1e-4)
-            log_odds_env = torch.log(p_env) - torch.log(1.0 - p_env)
-        return p_env, log_odds_env
+            p_env = (sh.unsqueeze(-1) * sw.unsqueeze(1)).clamp(1e-4, 1.0 - 1e-4)
+            return p_env, torch.log(p_env) - torch.log(1.0 - p_env)
 
-    def compute_5modal_law_prior_logits(
+    def compute_universal_proper_time_prior(
         self,
-        q_dim_in: torch.Tensor,
-        q_dim_bbox: torch.Tensor,
-        s_dim_in: torch.Tensor,
+        q_phi: torch.Tensor,
+        s_phi: torch.Tensor,
         s_dim_out: torch.Tensor,
-        s_dim_bbox: torch.Tensor,
         pair_valid_mask: torch.Tensor,
-        q_other_dim_in: Optional[torch.Tensor] = None,
-        s_other_dim_in: Optional[torch.Tensor] = None,
-        q_dim_occ: Optional[torch.Tensor] = None,
-        s_dim_occ: Optional[torch.Tensor] = None,
-        q_other_dim_occ: Optional[torch.Tensor] = None,
-        s_other_dim_occ: Optional[torch.Tensor] = None,
-        q_dim_cham: Optional[torch.Tensor] = None,
-        s_dim_cham: Optional[torch.Tensor] = None,
-        exemplar_weights: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Universal Proper-Time Metric Density Integrator over the Structural Support Basis:
-            Tau(L) = sum_b w_b * int_{Omega_in} phi_b(u) du + Delta_{partial}.
-        Enforces Subgroup Non-Degeneracy Guards on Transpose and Diode Occluder sections,
-        preventing square-isometry collisions (e.g. Task 142ca369 19x20).
+        Coupled Boltzmann-Gibbs & Woodbury-Tikhonov 1-Jet Stokes Selector:
+        Evaluates discrete geometric hypotheses at their exact integer peaks in Z_61 (preventing
+        multi-law averaging blur between correlated laws) and blends with the Woodbury-Tikhonov
+        proper-time integral for composite warps!
         """
-        B, K = s_dim_in.shape
-        device = q_dim_in.device
+        B, K, M_raw = s_phi.shape
+        device = q_phi.device
+        dev_type = "cuda" if q_phi.is_cuda else "cpu"
 
-        v_mask = pair_valid_mask.to(torch.float32)
-        v_sum = v_mask.sum(dim=-1, keepdim=True).clamp_min(1.0)
-        w_conj = v_mask / v_sum
+        with torch.amp.autocast(device_type=dev_type, enabled=False):
+            v_mask = pair_valid_mask.to(torch.float32)
+            v_3d = v_mask.unsqueeze(-1)
+            w_conj = v_mask / v_mask.sum(dim=1, keepdim=True).clamp_min(1.0)
+            w_3d = w_conj.unsqueeze(-1)
 
-        s_in_f = s_dim_in.to(torch.float32)
-        s_out_f = s_dim_out.to(torch.float32)
-        s_bbox_f = s_dim_bbox.to(torch.float32)
-        q_in_f = q_dim_in.to(torch.float32).view(B, 1)
-        q_bbox_f = q_dim_bbox.to(torch.float32).view(B, 1)
+            s_f = s_phi.to(torch.float32).clamp_min(1.0)
+            q_f = q_phi.to(torch.float32).clamp_min(1.0)
+            s_out_f = s_dim_out.to(torch.float32).clamp_min(1.0)
 
-        """Section 1: Unit Metric Density with Boundary Flux Delta_partial"""
-        mean_delta = torch.round(((s_out_f - s_in_f) * w_conj).sum(dim=-1, keepdim=True))
-        err_1 = (torch.abs((s_in_f + mean_delta) - s_out_f) * w_conj).sum(dim=-1, keepdim=True)
-        cand_q_1 = (q_in_f + mean_delta).clamp(1.0, 30.0)
+            s_in = s_f[:, :, 0]
+            q_in = q_f[:, 0]
 
-        """Section 2: Uniform Conformal Dilation Density lambda_0 * M_in"""
-        mean_ratio = ((s_out_f / s_in_f.clamp_min(1.0)) * w_conj).sum(dim=-1, keepdim=True)
-        err_2 = (torch.abs(torch.round(s_in_f * mean_ratio) - s_out_f) * w_conj).sum(dim=-1, keepdim=True) + 0.02
-        cand_q_2 = torch.round(q_in_f * mean_ratio).clamp(1.0, 30.0)
+            s_hb = s_f[:, :, 1]
+            q_hb = q_f[:, 1]
+            s_hc = s_f[:, :, 2]
+            q_hc = q_f[:, 2]
+            s_ho = s_f[:, :, 3]
+            q_ho = q_f[:, 3]
+            s_other = s_f[:, :, 4]
+            q_other = q_f[:, 4]
+            s_wo_tr = s_f[:, :, 5]
+            q_wo_tr = q_f[:, 5]
 
-        """Section 3: Invariant Topological Chart Capacity"""
-        mean_const = torch.round((s_out_f * w_conj).sum(dim=-1, keepdim=True))
-        is_truly_const_yet_in_varies = ((torch.abs(s_in_f - s_in_f.mean(dim=-1, keepdim=True)) * w_conj).sum(dim=-1, keepdim=True) > 0.5)
-        raw_err_3 = (torch.abs(mean_const - s_out_f) * w_conj).sum(dim=-1, keepdim=True)
-        err_3 = torch.where(is_truly_const_yet_in_varies | (err_1 > 0.1), raw_err_3 + 0.03, raw_err_3 + 2.0)
-        cand_q_3 = mean_const.clamp(1.0, 30.0)
+            if M_raw >= 8:
+                s_hmax_c = s_f[:, :, 6]
+                q_hmax_c = q_f[:, 6]
+                s_hmin_c = s_f[:, :, 7]
+                q_hmin_c = q_f[:, 7]
+            else:
+                s_hmax_c = s_hb
+                q_hmax_c = q_hb
+                s_hmin_c = s_hb
+                q_hmin_c = q_hb
 
-        """Section 4: Foreground Support Density M_fg + Boundary Flux"""
-        mean_delta_bbox = torch.round(((s_out_f - s_bbox_f) * w_conj).sum(dim=-1, keepdim=True))
-        raw_err_4 = (torch.abs((s_bbox_f + mean_delta_bbox) - s_out_f) * w_conj).sum(dim=-1, keepdim=True)
-        err_4 = torch.where(err_1 > 0.1, raw_err_4 + 0.04, raw_err_4 + 2.5)
-        cand_q_4 = (q_bbox_f + mean_delta_bbox).clamp(1.0, 30.0)
+            """1. Additive / Isometric shift: L_out = L_in + delta"""
+            mean_d_in = torch.round((w_conj * (s_out_f - s_in)).sum(dim=1, keepdim=True))
+            err_1 = (w_conj * torch.abs(s_out_f - (s_in + mean_d_in))).sum(dim=1)
+            cand_q_1 = (q_in + mean_d_in.squeeze(-1)).clamp(1.0, 30.0)
 
-        """Section 5: Kronecker Self-Product Metric Density M_in (x) M_in"""
-        err_5 = (torch.abs(s_in_f.pow(2) - s_out_f) * w_conj).sum(dim=-1, keepdim=True) + 0.05
-        cand_q_5 = q_in_f.pow(2).clamp(1.0, 30.0)
+            """2. Multiplicative homothety: L_out = round(r * L_in)"""
+            mean_ratio = (w_conj * (s_out_f / s_in)).sum(dim=1, keepdim=True)
+            err_2 = (w_conj * torch.abs(s_out_f - torch.round(s_in * mean_ratio))).sum(dim=1) + 0.01
+            cand_q_2 = torch.round(q_in * mean_ratio.squeeze(-1)).clamp(1.0, 30.0)
 
-        """Section 6: Quotient Bundle Contraction Density M_in / d"""
-        mean_div = torch.round(((s_in_f / s_out_f.clamp_min(1.0)) * w_conj).sum(dim=-1, keepdim=True)).clamp_min(1.0)
-        raw_err_6 = (torch.abs(torch.round(s_in_f / mean_div) - s_out_f) * w_conj).sum(dim=-1, keepdim=True)
-        err_6 = torch.where(mean_div > 1.5, raw_err_6 + 0.05, raw_err_6 + 5.0)
-        cand_q_6 = torch.round(q_in_f / mean_div).clamp(1.0, 30.0)
+            """3. Constant target dimension: L_out = C_out"""
+            mean_const = torch.round((w_conj * s_out_f).sum(dim=1, keepdim=True))
+            err_3 = (w_conj * torch.abs(s_out_f - mean_const)).sum(dim=1) + 0.02
+            cand_q_3 = mean_const.squeeze(-1).clamp(1.0, 30.0)
 
-        err_list = [err_1, err_2, err_3, err_4, err_5, err_6]
-        cand_list = [cand_q_1, cand_q_2, cand_q_3, cand_q_4, cand_q_5, cand_q_6]
+            """4. Global Foreground BBox + offset: L_out = L_bbox + delta_bbox"""
+            mean_d_hb = torch.round((w_conj * (s_out_f - s_hb)).sum(dim=1, keepdim=True))
+            active_hb = ((torch.abs(s_hb - s_in) * w_conj).sum(dim=1) > 0.1) | (torch.abs(q_hb - q_in) > 0.1)
+            err_4 = torch.where(
+                active_hb,
+                (w_conj * torch.abs(s_out_f - (s_hb + mean_d_hb))).sum(dim=1) + 0.03,
+                torch.full_like(err_1, 50.0),
+            )
+            cand_q_4 = (q_hb + mean_d_hb.squeeze(-1)).clamp(1.0, 30.0)
 
-        """
-        Section 7: Orthogonal Transpose Metric Density (Subgroup Non-Degeneracy Guard):
-        Only activates when canonical axis identity is violated (err_1 > 0.1) AND support inputs are non-square!
-        Completely prevents square training pairs (20x20, 18x18) from corrupting non-square test grids (19x20)!
-        """
-        if q_other_dim_in is not None and s_other_dim_in is not None:
-            s_other_f = s_other_dim_in.to(torch.float32)
-            q_other_f = q_other_dim_in.to(torch.float32).view(B, 1)
-            has_non_square_supp = ((torch.abs(s_in_f - s_other_f) * w_conj).sum(dim=-1, keepdim=True) > 0.5)
-            raw_err_7 = (torch.abs(s_other_f - s_out_f) * w_conj).sum(dim=-1, keepdim=True)
-            err_7 = torch.where((err_1 > 0.1) & has_non_square_supp, raw_err_7 + 0.05, torch.full_like(raw_err_7, 100.0))
-            cand_q_7 = q_other_f.clamp(1.0, 30.0)
-            err_list.append(err_7)
-            cand_list.append(cand_q_7)
+            """5. Chamber Divider Dimension: L_out = L_cham"""
+            active_hc = ((torch.abs(s_hc - s_in) * w_conj).sum(dim=1) > 0.1) | (torch.abs(q_hc - q_in) > 0.1)
+            err_5 = torch.where(
+                active_hc,
+                (w_conj * torch.abs(s_out_f - s_hc)).sum(dim=1) + 0.025,
+                torch.full_like(err_1, 50.0),
+            )
+            cand_q_5 = q_hc.clamp(1.0, 30.0)
 
-        """Section 8: Diode-Sink Occluder Support Density M_occ"""
-        if q_dim_occ is not None and s_dim_occ is not None:
-            s_occ_f = s_dim_occ.to(torch.float32)
-            q_occ_f = q_dim_occ.to(torch.float32).view(B, 1)
-            is_distinct_occ = (q_occ_f < q_in_f - 0.5) | ((torch.abs(s_occ_f - s_in_f) * w_conj).sum(dim=-1, keepdim=True) > 0.5)
-            raw_err_8 = (torch.abs(s_occ_f - s_out_f) * w_conj).sum(dim=-1, keepdim=True)
-            err_8 = torch.where(is_distinct_occ, raw_err_8, torch.full_like(raw_err_8, 100.0))
-            cand_q_8 = q_occ_f.clamp(1.0, 30.0)
-            err_list.append(err_8)
-            cand_list.append(cand_q_8)
+            """6. Vanishing Occluder BBox: L_out = L_occ"""
+            active_ho = ((torch.abs(s_ho - s_in) * w_conj).sum(dim=1) > 0.1) & (torch.abs(q_ho - q_in) > 0.1)
+            err_6 = torch.where(
+                active_ho,
+                (w_conj * torch.abs(s_out_f - s_ho)).sum(dim=1) + 0.03,
+                torch.full_like(err_1, 50.0),
+            )
+            cand_q_6 = q_ho.clamp(1.0, 30.0)
 
-        """Section 9: Transposed Diode-Sink Occluder Support Density M_occ^T"""
-        if q_other_dim_occ is not None and s_other_dim_occ is not None:
-            s_occ_tr_f = s_other_dim_occ.to(torch.float32)
-            q_occ_tr_f = q_other_dim_occ.to(torch.float32).view(B, 1)
-            is_distinct_occ_tr = (q_occ_tr_f < q_in_f - 0.5) | ((torch.abs(s_occ_tr_f - s_in_f) * w_conj).sum(dim=-1, keepdim=True) > 0.5)
-            raw_err_9 = (torch.abs(s_occ_tr_f - s_out_f) * w_conj).sum(dim=-1, keepdim=True)
-            err_9 = torch.where(is_distinct_occ_tr & (err_1 > 0.1), raw_err_9 + 0.02, torch.full_like(raw_err_9, 100.0))
-            cand_q_9 = q_occ_tr_f.clamp(1.0, 30.0)
-            err_list.append(err_9)
-            cand_list.append(cand_q_9)
+            """7. Transposed Vanishing Occluder BBox: L_out = W_occ"""
+            active_wo_tr = ((torch.abs(s_wo_tr - s_other) * w_conj).sum(dim=1) > 0.1) & (torch.abs(q_wo_tr - q_other) > 0.1)
+            err_7 = torch.where(
+                active_wo_tr,
+                (w_conj * torch.abs(s_out_f - s_wo_tr)).sum(dim=1) + 0.035,
+                torch.full_like(err_1, 50.0),
+            )
+            cand_q_7 = q_wo_tr.clamp(1.0, 30.0)
 
-        """Section 10: Interior Chamber-Partitioned Support Density M_cham"""
-        if q_dim_cham is not None and s_dim_cham is not None:
-            s_cham_f = s_dim_cham.to(torch.float32)
-            q_cham_f = q_dim_cham.to(torch.float32).view(B, 1)
-            has_real_div = (q_cham_f < q_in_f - 0.5)
-            raw_err_10 = (torch.abs(s_cham_f - s_out_f) * w_conj).sum(dim=-1, keepdim=True)
-            err_10 = torch.where(has_real_div, raw_err_10, torch.full_like(raw_err_10, 100.0))
-            cand_q_10 = q_cham_f.clamp(1.0, 30.0)
-            err_list.append(err_10)
-            cand_list.append(cand_q_10)
+            """8. Largest Single-Color Sub-Mask BBox: L_out = L_max_col"""
+            mean_d_maxc = torch.round((w_conj * (s_out_f - s_hmax_c)).sum(dim=1, keepdim=True))
+            active_maxc = ((torch.abs(s_hmax_c - s_in) * w_conj).sum(dim=1) > 0.1) | (torch.abs(q_hmax_c - q_in) > 0.1)
+            err_8 = torch.where(
+                active_maxc,
+                (w_conj * torch.abs(s_out_f - (s_hmax_c + mean_d_maxc))).sum(dim=1) + 0.04,
+                torch.full_like(err_1, 50.0),
+            )
+            cand_q_8 = (q_hmax_c + mean_d_maxc.squeeze(-1)).clamp(1.0, 30.0)
 
-        errors = torch.cat(err_list, dim=-1)
-        candidates_q = torch.cat(cand_list, dim=-1)
+            """9. Smallest Non-Trivial Single-Color Sub-Mask BBox: L_out = L_min_col"""
+            active_minc = ((torch.abs(s_hmin_c - s_in) * w_conj).sum(dim=1) > 0.1) | (torch.abs(q_hmin_c - q_in) > 0.1)
+            err_9 = torch.where(
+                active_minc,
+                (w_conj * torch.abs(s_out_f - s_hmin_c)).sum(dim=1) + 0.045,
+                torch.full_like(err_1, 50.0),
+            )
+            cand_q_9 = q_hmin_c.clamp(1.0, 30.0)
 
-        min_err = torch.min(errors, dim=-1, keepdim=True)[0]
-        beta_bose = 15.0 / (min_err + 0.35)
+            """10. Transposed Input Dimension: L_out = W_in (strictly when non-isometric & non-square!)"""
+            non_square_s = ((torch.abs(s_in - s_other) * w_conj).sum(dim=1) > 0.1) & (err_1 > 0.1)
+            err_10 = torch.where(
+                non_square_s,
+                (w_conj * torch.abs(s_out_f - s_other)).sum(dim=1) + 0.05,
+                torch.full_like(err_1, 50.0),
+            )
+            cand_q_10 = q_other.clamp(1.0, 30.0)
 
-        law_confidences = F.softmax(-beta_bose * errors, dim=-1)
+            """11. Continuous Woodbury-Tikhonov 1-Jet Stokes Integral"""
+            s_l0, q_l0 = s_f[:, :, 0:1], q_f[:, 0:1]
+            delta_s = (s_out_f.unsqueeze(-1) - s_l0) * v_3d
+            mean_out_s = (s_out_f.unsqueeze(-1) * w_3d).sum(dim=1, keepdim=True)
 
-        cand_shift_classes = (float(self.ZERO_SHIFT_INDEX) + (candidates_q - q_in_f)).clamp(0.0, 60.0)
+            psi_s = torch.cat(
+                [
+                    torch.ones_like(s_l0),
+                    s_f[:, :, 1:6] - s_l0,
+                    s_l0 * (torch.log(s_l0) / 3.40),
+                    mean_out_s.expand(B, K, 1) - s_l0,
+                ],
+                dim=-1,
+            ) * v_3d
 
-        classes_grid = cast(torch.Tensor, self.class_indices).to(device=device).view(1, 1, self.RELATIVE_CLASSES)
-        centers = cand_shift_classes.unsqueeze(-1)
-        gauss_kernels = torch.exp(-0.50 * ((classes_grid - centers) / 0.50).pow(2))
+            psi_q = torch.cat(
+                [
+                    torch.ones_like(q_l0),
+                    q_f[:, 1:6] - q_l0,
+                    q_l0 * (torch.log(q_l0) / 3.40),
+                    mean_out_s.squeeze(1) - q_l0,
+                ],
+                dim=-1,
+            )
 
-        prior_logits = torch.sum(law_confidences.unsqueeze(-1) * gauss_kernels, dim=1)
-        condensation_boost = 1.0 + (2.50 * torch.exp(-4.0 * min_err))
+            col_norm_sq = (psi_s.pow(2) * w_3d).sum(dim=1).clamp_min(1e-4)
+            beta_opt = ((psi_s * delta_s * w_3d).sum(dim=1) / col_norm_sq).clamp(-2.0, 2.0)
+            res_col = (torch.abs(delta_s - (psi_s * beta_opt.unsqueeze(1))) * w_3d).sum(dim=1)
+            signal_mag = 0.50 * ((torch.abs(psi_s) * w_3d).sum(dim=1) + torch.abs(psi_q))
+            fisher_active = torch.tanh(signal_mag * 2.0)
+            fisher_active[:, 0] = 1.0
+
+            g_fisher = (F.softmax(-18.0 * (res_col + 4.0 * (1.0 - fisher_active)), dim=-1) * fisher_active) / col_norm_sq.clamp_min(1.0)
+            psi_s_g = psi_s * g_fisher.unsqueeze(1)
+            gram_k = 0.50 * (torch.bmm(psi_s_g, psi_s.transpose(1, 2)) + torch.bmm(psi_s, psi_s_g.transpose(1, 2)))
+            eye_k = torch.eye(K, dtype=torch.float32, device=device).unsqueeze(0).expand(B, K, K)
+            gram_spd = gram_k + (WOODBURY_TIKHONOV_REG * eye_k)
+            trace_spd = torch.diagonal(gram_spd, dim1=-2, dim2=-1).sum(dim=-1, keepdim=True).unsqueeze(-1).clamp_min(1e-4)
+            gram_inv = eye_k / trace_spd
+            two_eye = 2.0 * eye_k
+            for _ in range(6):
+                gram_inv = torch.bmm(gram_inv, two_eye - torch.bmm(gram_spd, gram_inv))
+
+            w_woodbury = torch.bmm(psi_s_g.transpose(1, 2), torch.bmm(gram_inv, delta_s)).squeeze(-1)
+            pred_s_wood = s_in + torch.round(torch.sum(psi_s * w_woodbury.unsqueeze(1), dim=-1))
+            err_11 = (w_conj * torch.abs(s_out_f - pred_s_wood)).sum(dim=1) + 0.06
+            cand_q_11 = (q_in + torch.round(torch.sum(psi_q * w_woodbury, dim=-1))).clamp(1.0, 30.0)
+
+            all_errs = torch.stack(
+                [err_1, err_2, err_3, err_4, err_5, err_6, err_7, err_8, err_9, err_10, err_11],
+                dim=-1,
+            )
+            all_cands_q = torch.stack(
+                [cand_q_1, cand_q_2, cand_q_3, cand_q_4, cand_q_5, cand_q_6, cand_q_7, cand_q_8, cand_q_9, cand_q_10, cand_q_11],
+                dim=-1,
+            )
+
+            min_err = torch.min(all_errs, dim=-1, keepdim=True)[0]
+            law_weights = F.softmax(-18.0 * (all_errs - min_err), dim=-1)
+
+            cand_shifts = (float(self.ZERO_SHIFT_INDEX) + (all_cands_q - q_in.unsqueeze(-1))).clamp(0.0, 60.0)
+            classes_grid = cast(torch.Tensor, self.class_indices).to(device=device).view(1, 1, self.RELATIVE_CLASSES)
+            gauss_peaks = torch.exp(-0.50 * ((classes_grid - cand_shifts.unsqueeze(-1)) / 0.50).pow(2))
+
+            prior_logits = torch.sum(law_weights.unsqueeze(-1) * gauss_peaks, dim=1)
+            condensation_boost = 1.0 + (2.00 * torch.exp(-4.0 * min_err))
 
         return prior_logits, condensation_boost, min_err
 
@@ -559,35 +603,24 @@ class BoundaryMetricSizePredictor(nn.Module):
         dev_type = "cuda" if h_rel_logits.is_cuda else "cpu"
 
         with torch.amp.autocast(device_type=dev_type, enabled=False):
-            h_log_f32 = torch.clamp(h_rel_logits.to(torch.float32), -25.0, 25.0)
-            w_log_f32 = torch.clamp(w_rel_logits.to(torch.float32), -25.0, 25.0)
+            hl = torch.clamp(h_rel_logits.to(torch.float32), -25.0, 25.0)
+            wl = torch.clamp(w_rel_logits.to(torch.float32), -25.0, 25.0)
 
-            class_h_discrete = torch.argmax(h_log_f32, dim=-1)
-            class_w_discrete = torch.argmax(w_log_f32, dim=-1)
+            dh_d = torch.argmax(hl, dim=-1).to(torch.int64) - self.ZERO_SHIFT_INDEX
+            dw_d = torch.argmax(wl, dim=-1).to(torch.int64) - self.ZERO_SHIFT_INDEX
 
-            delta_h_discrete = class_h_discrete.to(torch.int64) - self.ZERO_SHIFT_INDEX
-            delta_w_discrete = class_w_discrete.to(torch.int64) - self.ZERO_SHIFT_INDEX
-
-            pred_h = torch.clamp(h_in + delta_h_discrete, 1, self.MAX_CANVAS_DIM)
-            pred_w = torch.clamp(w_in + delta_w_discrete, 1, self.MAX_CANVAS_DIM)
+            pred_h = torch.clamp(h_in + dh_d, 1, self.MAX_CANVAS_DIM)
+            pred_w = torch.clamp(w_in + dw_d, 1, self.MAX_CANVAS_DIM)
             capacity = pred_h * pred_w
 
-            probs_h = F.softmax(h_log_f32, dim=-1)
-            probs_w = F.softmax(w_log_f32, dim=-1)
+            ci = cast(torch.Tensor, self.class_indices).to(device=device)
+            dh_c = torch.sum(F.softmax(hl, dim=-1) * ci, dim=-1) - float(self.ZERO_SHIFT_INDEX)
+            dw_c = torch.sum(F.softmax(wl, dim=-1) * ci, dim=-1) - float(self.ZERO_SHIFT_INDEX)
 
-            class_indices_device = cast(torch.Tensor, self.class_indices).to(device=device)
-            expected_class_h = torch.sum(probs_h * class_indices_device, dim=-1)
-            expected_class_w = torch.sum(probs_w * class_indices_device, dim=-1)
-
-            delta_h_cont = expected_class_h - float(self.ZERO_SHIFT_INDEX)
-            delta_w_cont = expected_class_w - float(self.ZERO_SHIFT_INDEX)
-
-            h_cont = torch.clamp(h_in.float() + delta_h_cont, 1.0, float(self.MAX_CANVAS_DIM))
-            w_cont = torch.clamp(w_in.float() + delta_w_cont, 1.0, float(self.MAX_CANVAS_DIM))
-            capacity_cont = h_cont * w_cont
-
-            capacity_ste = capacity_cont + (capacity.float() - capacity_cont).detach()
-        return pred_h, pred_w, capacity, capacity_ste
+            hc = torch.clamp(h_in.float() + dh_c, 1.0, float(self.MAX_CANVAS_DIM))
+            wc = torch.clamp(w_in.float() + dw_c, 1.0, float(self.MAX_CANVAS_DIM))
+            cap_c = hc * wc
+            return pred_h, pred_w, capacity, cap_c + (capacity.float() - cap_c).detach()
 
     def refine_with_terminal_carrier_mask(
         self,
@@ -606,82 +639,43 @@ class BoundaryMetricSizePredictor(nn.Module):
         h_in, w_in = self.extract_input_dimensions(in_masks)
 
         with torch.amp.autocast(device_type=dev_type, enabled=False):
-            psi_2d = carrier_psi.view(B, H, W).to(torch.float32)
-            p_act = torch.sigmoid(torch.clamp(psi_2d, -12.0, 12.0))
-            carrier_sum = p_act.sum(dim=(1, 2)).unsqueeze(-1).clamp_min(1.0)
-
-            q_term = (terminal_field.to(torch.float32) * p_act.unsqueeze(-1)).sum(dim=(1, 2)) / carrier_sum
+            p_act = torch.sigmoid(torch.clamp(carrier_psi.view(B, H, W).to(torch.float32), -12.0, 12.0))
+            q_term = (terminal_field.to(torch.float32) * p_act.unsqueeze(-1)).sum(dim=(1, 2)) / p_act.sum(dim=(1, 2)).unsqueeze(-1).clamp_min(1.0)
             if rule_context is not None and rule_context.shape[-1] == D:
                 q_term = q_term + (0.25 * rule_context.to(torch.float32))
 
-            e_y = p_act.mean(dim=-1)
-            e_x = p_act.mean(dim=-2)
+            h_psi = p_act.max(dim=-1)[0].sum(dim=-1, keepdim=True).clamp(1.0, float(H))
+            w_psi = p_act.max(dim=-2)[0].sum(dim=-1, keepdim=True).clamp(1.0, float(W))
 
-            centered_y = (e_y - 0.50) * (2.0 / float(max(1, H)))
-            centered_x = (e_x - 0.50) * (2.0 / float(max(1, W)))
+            sh_c = (float(self.ZERO_SHIFT_INDEX) + (h_psi - h_in.float().unsqueeze(-1))).clamp(0.0, 60.0)
+            sw_c = (float(self.ZERO_SHIFT_INDEX) + (w_psi - w_in.float().unsqueeze(-1))).clamp(0.0, 60.0)
 
-            cum_y = torch.cumsum(centered_y, dim=-1)
-            score_abs_h = cum_y - (cum_y[:, -1:] - cum_y)
-
-            cum_x = torch.cumsum(centered_x, dim=-1)
-            score_abs_w = cum_x - (cum_x[:, -1:] - cum_x)
-
-            shifts = torch.arange(self.RELATIVE_CLASSES, device=device, dtype=torch.int64) - self.ZERO_SHIFT_INDEX
-            cand_h_idx = (h_in.view(B, 1) + shifts.view(1, -1) - 1).clamp(0, H - 1)
-            cand_w_idx = (w_in.view(B, 1) + shifts.view(1, -1) - 1).clamp(0, W - 1)
-
-            in_range_h = ((h_in.view(B, 1) + shifts.view(1, -1)) >= 1) & ((h_in.view(B, 1) + shifts.view(1, -1)) <= H)
-            in_range_w = ((w_in.view(B, 1) + shifts.view(1, -1)) >= 1) & ((w_in.view(B, 1) + shifts.view(1, -1)) <= W)
-
-            phi_h = torch.gather(score_abs_h, dim=1, index=cand_h_idx) * in_range_h.float()
-            phi_w = torch.gather(score_abs_w, dim=1, index=cand_w_idx) * in_range_w.float()
+            ci = cast(torch.Tensor, self.class_indices).to(device=device).view(1, self.RELATIVE_CLASSES)
+            phi_h = torch.exp(-0.50 * ((ci - sh_c) / 1.50).pow(2))
+            phi_w = torch.exp(-0.50 * ((ci - sw_c) / 1.50).pow(2))
 
         if D == self.head_terminal_h.in_features:
-            term_h_logits = self.head_terminal_h(q_term.to(dtype)).to(torch.float32)
-            term_w_logits = self.head_terminal_w(q_term.to(dtype)).to(torch.float32)
+            th_log = self.head_terminal_h(q_term.to(dtype)).to(torch.float32)
+            tw_log = self.head_terminal_w(q_term.to(dtype)).to(torch.float32)
         else:
-            term_h_logits = torch.zeros_like(base_h_logits, dtype=torch.float32)
-            term_w_logits = torch.zeros_like(base_w_logits, dtype=torch.float32)
+            th_log = torch.zeros_like(base_h_logits, dtype=torch.float32)
+            tw_log = torch.zeros_like(base_w_logits, dtype=torch.float32)
 
         with torch.amp.autocast(device_type=dev_type, enabled=False):
-            """
-            When an exact analytical proper-time law matches support demonstrations with zero error
-            (latest_min_err_h == 0.0), lock the prior by setting gate_err = 0.0!
-            """
-            if self.latest_min_err_h is not None and self.latest_min_err_h.shape[0] == B:
-                gate_err_h = torch.tanh(4.0 * self.latest_min_err_h.to(torch.float32))
-            else:
-                gate_err_h = torch.ones((B, 1), dtype=torch.float32, device=device)
+            ge_h = torch.tanh(2.5 * self.latest_min_err_h.to(torch.float32)) if (self.latest_min_err_h is not None and self.latest_min_err_h.shape[0] == B) else torch.ones((B, 1), dtype=torch.float32, device=device)
+            ge_w = torch.tanh(2.5 * self.latest_min_err_w.to(torch.float32)) if (self.latest_min_err_w is not None and self.latest_min_err_w.shape[0] == B) else torch.ones((B, 1), dtype=torch.float32, device=device)
 
-            if self.latest_min_err_w is not None and self.latest_min_err_w.shape[0] == B:
-                gate_err_w = torch.tanh(4.0 * self.latest_min_err_w.to(torch.float32))
-            else:
-                gate_err_w = torch.ones((B, 1), dtype=torch.float32, device=device)
+            gt = torch.tanh(self.terminal_gate.to(torch.float32))
+            gm = F.softplus(self.carrier_mask_gain.to(torch.float32)) * 0.35
 
-            g_term = torch.tanh(self.terminal_gate.to(torch.float32))
-            g_mask = F.softplus(self.carrier_mask_gain.to(torch.float32)) * 0.35
-
-            final_h_logits = (
-                base_h_logits.to(torch.float32)
-                + gate_err_h * ((g_term * term_h_logits) + (g_mask * phi_h))
-            ).to(dtype)
-
-            final_w_logits = (
-                base_w_logits.to(torch.float32)
-                + gate_err_w * ((g_term * term_w_logits) + (g_mask * phi_w))
-            ).to(dtype)
+            final_h = (base_h_logits.to(torch.float32) + (0.10 + 0.90 * ge_h) * (gt * th_log) + ge_h * (gm * phi_h)).to(dtype)
+            final_w = (base_w_logits.to(torch.float32) + (0.10 + 0.90 * ge_w) * (gt * tw_log) + ge_w * (gm * phi_w)).to(dtype)
 
         self.latest_min_err_h = None
         self.latest_min_err_w = None
 
-        pred_h, pred_w, capacity, capacity_ste = self._resolve_dimensions_from_logits(
-            h_rel_logits=final_h_logits,
-            w_rel_logits=final_w_logits,
-            h_in=h_in,
-            w_in=w_in,
-        )
-
-        return final_h_logits, final_w_logits, pred_h, pred_w, capacity, capacity_ste
+        pred_h, pred_w, cap, cap_ste = self._resolve_dimensions_from_logits(final_h, final_w, h_in, w_in)
+        return final_h, final_w, pred_h, pred_w, cap, cap_ste
 
     def forward(
         self,
@@ -698,125 +692,55 @@ class BoundaryMetricSizePredictor(nn.Module):
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         h_in, w_in = self.extract_input_dimensions(mask)
         geo_fiber = self.harmonic_fiber(h_in, w_in)
+        z_geo = self.rule_modulator(self.envelope_pooler(h_field, mask), rule_context)
+        z_ind = self.support_inductor(query_context=z_geo, support_in_masks=support_in_masks, support_out_masks=support_out_masks)
 
-        z_geo_raw = self.envelope_pooler(h_field, mask)
-        z_geo_modulated = self.rule_modulator(z_geo_raw, rule_context)
-
-        z_support_induction = self.support_inductor(
-            query_context=z_geo_modulated,
-            support_in_masks=support_in_masks,
-            support_out_masks=support_out_masks,
-        )
-
-        joint_input = torch.cat([z_geo_modulated, z_support_induction, geo_fiber], dim=-1)
-        fused_context = self.context_ffn(joint_input)
-
+        fused_ctx = self.context_ffn(torch.cat([z_geo, z_ind, geo_fiber], dim=-1))
         na3d_obs = NA3DFinslerLieEngine.extract_na3d_global_invariants(h_field, mask)
-        if (
-            na3d_obs.shape[-1] == self.na3d_anisotropy_proj.in_features
-            and fused_context.shape[-1] == self.na3d_anisotropy_proj.out_features
-        ):
-            fused_context = fused_context + self.na3d_anisotropy_proj(na3d_obs.to(fused_context.dtype))
+        if na3d_obs.shape[-1] == self.na3d_anisotropy_proj.in_features and fused_ctx.shape[-1] == self.na3d_anisotropy_proj.out_features:
+            fused_ctx = fused_ctx + self.na3d_anisotropy_proj(na3d_obs.to(fused_ctx.dtype))
 
-        raw_h_logits = self.head_rel_h(fused_context)
-        raw_w_logits = self.head_rel_w(fused_context)
+        raw_h, raw_w = self.head_rel_h(fused_ctx), self.head_rel_w(fused_ctx)
 
         if support_in_masks is not None and support_out_masks is not None and support_in_masks.shape[1] > 0:
-            s_h_in, s_w_in = self.extract_input_dimensions(support_in_masks)
-            s_h_out, s_w_out = self.extract_input_dimensions(support_out_masks)
-
-            if pair_valid_mask is not None:
-                eff_valid_mask = pair_valid_mask
-            else:
-                eff_valid_mask = (support_in_masks.any(dim=-1).any(dim=-1)) & (support_out_masks.any(dim=-1).any(dim=-1))
+            s_hi, s_wi = self.extract_input_dimensions(support_in_masks)
+            s_ho, s_wo = self.extract_input_dimensions(support_out_masks)
+            eff_v = pair_valid_mask if pair_valid_mask is not None else (support_in_masks.any(dim=-1).any(dim=-1) & support_out_masks.any(dim=-1).any(dim=-1))
 
             if query_inputs is not None and support_inputs is not None:
-                q_h_bbox, q_w_bbox = self.extract_foreground_bbox_dimensions(query_inputs, mask)
-                s_h_bbox, s_w_bbox = self.extract_foreground_bbox_dimensions(support_inputs, support_in_masks)
-                (
-                    q_h_occ,
-                    q_w_occ,
-                    _,
-                    _,
-                    s_h_occ,
-                    s_w_occ,
-                    _,
-                    _,
-                ) = self.extract_vanishing_occluder_bbox(
-                    query_inputs=query_inputs,
-                    query_in_masks=mask,
-                    support_inputs=support_inputs,
-                    support_in_masks=support_in_masks,
-                    support_outputs=support_outputs,
-                    support_out_masks=support_out_masks,
-                    pair_valid_mask=eff_valid_mask,
+                q_hb, q_wb = self.extract_foreground_bbox_dimensions(query_inputs, mask)
+                s_hb, s_wb = self.extract_foreground_bbox_dimensions(support_inputs, support_in_masks)
+                q_ho, q_wo, _, _, s_ho_occ, s_wo_occ, _, _ = self.extract_vanishing_occluder_bbox(
+                    query_inputs, mask, support_inputs, support_in_masks, support_outputs, support_out_masks, eff_v
                 )
-                q_h_cham, q_w_cham, _, _ = self.extract_chamber_divider_dimensions(query_inputs, mask)
-                s_h_cham, s_w_cham, _, _ = self.extract_chamber_divider_dimensions(support_inputs, support_in_masks)
+                q_hc, q_wc, _, _ = self.extract_chamber_divider_dimensions(query_inputs, mask)
+                s_hc, s_wc, _, _ = self.extract_chamber_divider_dimensions(support_inputs, support_in_masks)
+                q_hmax, q_wmax, q_hmin, q_wmin = self.extract_extremal_color_bbox_dimensions(query_inputs, mask)
+                s_hmax, s_wmax, s_hmin, s_wmin = self.extract_extremal_color_bbox_dimensions(support_inputs, support_in_masks)
             else:
-                q_h_bbox, q_w_bbox = h_in, w_in
-                s_h_bbox, s_w_bbox = s_h_in, s_w_in
-                q_h_occ, q_w_occ = None, None
-                s_h_occ, s_w_occ = None, None
-                q_h_cham, q_w_cham = None, None
-                s_h_cham, s_w_cham = None, None
+                q_hb = q_ho = q_hc = q_hmax = q_hmin = h_in
+                q_wb = q_wo = q_wc = q_wmax = q_wmin = w_in
+                s_hb = s_ho_occ = s_hc = s_hmax = s_hmin = s_hi
+                s_wb = s_wo_occ = s_wc = s_wmax = s_wmin = s_wi
 
-            prior_h, boost_h, min_err_h = self.compute_5modal_law_prior_logits(
-                q_dim_in=h_in,
-                q_dim_bbox=q_h_bbox,
-                s_dim_in=s_h_in,
-                s_dim_out=s_h_out,
-                s_dim_bbox=s_h_bbox,
-                pair_valid_mask=eff_valid_mask,
-                q_other_dim_in=w_in,
-                s_other_dim_in=s_w_in,
-                q_dim_occ=q_h_occ,
-                s_dim_occ=s_h_occ,
-                q_other_dim_occ=q_w_occ,
-                s_other_dim_occ=s_w_occ,
-                q_dim_cham=q_h_cham,
-                s_dim_cham=s_h_cham,
-            )
-            prior_w, boost_w, min_err_w = self.compute_5modal_law_prior_logits(
-                q_dim_in=w_in,
-                q_dim_bbox=q_w_bbox,
-                s_dim_in=s_w_in,
-                s_dim_out=s_w_out,
-                s_dim_bbox=s_w_bbox,
-                pair_valid_mask=eff_valid_mask,
-                q_other_dim_in=h_in,
-                s_other_dim_in=s_h_in,
-                q_dim_occ=q_w_occ,
-                s_dim_occ=s_w_occ,
-                q_other_dim_occ=q_h_occ,
-                s_other_dim_occ=s_h_occ,
-                q_dim_cham=q_w_cham,
-                s_dim_cham=s_h_cham,
-            )
+            q_phi_h = torch.stack([h_in, q_hb, q_hc, q_ho, w_in, q_wo, q_hmax, q_hmin], dim=-1)
+            s_phi_h = torch.stack([s_hi, s_hb, s_hc, s_ho_occ, s_wi, s_wo_occ, s_hmax, s_hmin], dim=-1)
+            q_phi_w = torch.stack([w_in, q_wb, q_wc, q_wo, h_in, q_ho, q_wmax, q_wmin], dim=-1)
+            s_phi_w = torch.stack([s_wi, s_wb, s_wc, s_wo_occ, s_hi, s_ho_occ, s_wmax, s_wmin], dim=-1)
 
-            self.latest_min_err_h = min_err_h.detach()
-            self.latest_min_err_w = min_err_w.detach()
+            pr_h, bst_h, err_h = self.compute_universal_proper_time_prior(q_phi_h, s_phi_h, s_ho, eff_v)
+            pr_w, bst_w, err_w = self.compute_universal_proper_time_prior(q_phi_w, s_phi_w, s_wo, eff_v)
 
-            res_gate_h = (0.35 + 0.65 * torch.tanh(2.0 * min_err_h)).to(raw_h_logits.dtype)
-            res_gate_w = (0.35 + 0.65 * torch.tanh(2.0 * min_err_w)).to(raw_w_logits.dtype)
-
-            gain = F.softplus(self.law_prior_gain).to(raw_h_logits.dtype)
-            h_rel_logits = (res_gate_h * raw_h_logits) + (gain * boost_h.to(raw_h_logits.dtype) * prior_h.to(raw_h_logits.dtype))
-            w_rel_logits = (res_gate_w * raw_w_logits) + (gain * boost_w.to(raw_w_logits.dtype) * prior_w.to(raw_w_logits.dtype))
+            self.latest_min_err_h, self.latest_min_err_w = err_h.detach(), err_w.detach()
+            gain = torch.clamp(F.softplus(self.law_prior_gain), max=6.0).to(raw_h.dtype)
+            h_rel = ((0.35 + 0.65 * torch.tanh(2.5 * err_h)).to(raw_h.dtype) * raw_h) + (gain * bst_h.to(raw_h.dtype) * pr_h.to(raw_h.dtype))
+            w_rel = ((0.35 + 0.65 * torch.tanh(2.5 * err_w)).to(raw_w.dtype) * raw_w) + (gain * bst_w.to(raw_w.dtype) * pr_w.to(raw_w.dtype))
         else:
-            self.latest_min_err_h = None
-            self.latest_min_err_w = None
-            h_rel_logits = raw_h_logits
-            w_rel_logits = raw_w_logits
+            self.latest_min_err_h = self.latest_min_err_w = None
+            h_rel, w_rel = raw_h, raw_w
 
-        pred_h, pred_w, capacity, capacity_ste = self._resolve_dimensions_from_logits(
-            h_rel_logits=h_rel_logits,
-            w_rel_logits=w_rel_logits,
-            h_in=h_in,
-            w_in=w_in,
-        )
-
-        return h_rel_logits, w_rel_logits, pred_h, pred_w, capacity, capacity_ste
+        pred_h, pred_w, cap, cap_ste = self._resolve_dimensions_from_logits(h_rel, w_rel, h_in, w_in)
+        return h_rel, w_rel, pred_h, pred_w, cap, cap_ste
 
     @classmethod
     def evaluate_entropy_and_runner_up(
@@ -827,40 +751,17 @@ class BoundaryMetricSizePredictor(nn.Module):
         w_in: int,
         uncertainty_threshold: float = 0.40,
     ) -> Tuple[float, Optional[Tuple[int, int]]]:
-        probs_h = F.softmax(h_rel_logits.view(-1), dim=-1)
-        probs_w = F.softmax(w_rel_logits.view(-1), dim=-1)
-
-        entropy_h = -torch.sum(probs_h * safe_log(probs_h, eps=1e-7)).item()
-        entropy_w = -torch.sum(probs_w * safe_log(probs_w, eps=1e-7)).item()
-        mean_entropy = 0.50 * (entropy_h + entropy_w)
-
-        runner_up_dims = None
-        if mean_entropy > uncertainty_threshold:
-            top2_h_classes = torch.topk(probs_h, k=2)[1]
-            top2_w_classes = torch.topk(probs_w, k=2)[1]
-
-            sec_class_h = int(top2_h_classes[1].item())
-            sec_class_w = int(top2_w_classes[1].item())
-
-            sec_delta_h = sec_class_h - cls.ZERO_SHIFT_INDEX
-            sec_delta_w = sec_class_w - cls.ZERO_SHIFT_INDEX
-
-            sec_h = max(1, min(cls.MAX_CANVAS_DIM, h_in + sec_delta_h))
-            sec_w = max(1, min(cls.MAX_CANVAS_DIM, w_in + sec_delta_w))
-            runner_up_dims = (sec_h, sec_w)
-
-        return mean_entropy, runner_up_dims
+        ph, pw = F.softmax(h_rel_logits.view(-1), dim=-1), F.softmax(w_rel_logits.view(-1), dim=-1)
+        mean_ent = 0.50 * float((-torch.sum(ph * safe_log(ph)) - torch.sum(pw * safe_log(pw))).item())
+        if mean_ent <= uncertainty_threshold:
+            return mean_ent, None
+        sh = int(torch.topk(ph, k=2)[1][1].item()) - cls.ZERO_SHIFT_INDEX
+        sw = int(torch.topk(pw, k=2)[1][1].item()) - cls.ZERO_SHIFT_INDEX
+        return mean_ent, (max(1, min(cls.MAX_CANVAS_DIM, h_in + sh)), max(1, min(cls.MAX_CANVAS_DIM, w_in + sw)))
 
     @classmethod
-    def crop_canvas_to_predictions(
-        cls,
-        canvas: torch.Tensor,
-        target_h: int,
-        target_w: int,
-    ) -> torch.Tensor:
-        h_safe = max(1, min(cls.MAX_CANVAS_DIM, target_h))
-        w_safe = max(1, min(cls.MAX_CANVAS_DIM, target_w))
-        return canvas[..., :h_safe, :w_safe].contiguous()
+    def crop_canvas_to_predictions(cls, canvas: torch.Tensor, target_h: int, target_w: int) -> torch.Tensor:
+        return canvas[..., : max(1, min(cls.MAX_CANVAS_DIM, target_h)), : max(1, min(cls.MAX_CANVAS_DIM, target_w))].contiguous()
 
     @classmethod
     def generate_target_mask(
@@ -871,29 +772,19 @@ class BoundaryMetricSizePredictor(nn.Module):
         canvas_dim: int = DEFAULT_MAX_CANVAS_DIM,
         device: Optional[torch.device] = None,
     ) -> torch.Tensor:
-        if device is None:
-            device = target_heights.device
-
-        y_coords = torch.arange(canvas_dim, device=device).view(1, canvas_dim, 1)
-        x_coords = torch.arange(canvas_dim, device=device).view(1, 1, canvas_dim)
-
-        h_bound = target_heights.view(batch_size, 1, 1)
-        w_bound = target_widths.view(batch_size, 1, 1)
-
-        mask = (y_coords < h_bound) & (x_coords < w_bound)
-        return mask
+        dev = device if device is not None else target_heights.device
+        yc = torch.arange(canvas_dim, device=dev).view(1, canvas_dim, 1)
+        xc = torch.arange(canvas_dim, device=dev).view(1, 1, canvas_dim)
+        return (yc < target_heights.view(batch_size, 1, 1)) & (xc < target_widths.view(batch_size, 1, 1))
 
 
 def verify_boundary_size_predictor_diagnostics() -> bool:
-    """
-    Diagnostic Verification Gate for boundary_size_predictor.py.
-    """
+    """Diagnostic Verification Gate for boundary_size_predictor.py."""
     torch.manual_seed(42)
     b, h, w, d = 2, 20, 20, 32
 
     config = FGNSConfig()
     oracle = BoundaryMetricSizePredictor(config=config)
-
     oracle.envelope_pooler = SpatialEnvelopeAttentionPooler(d_model=d, num_heads=4)
     oracle.harmonic_fiber = HarmonicGeometricFiber(d_out=16, num_frequencies=4)
     oracle.support_inductor = SupportDemonstrationSizeInductor(d_model=d, num_heads=4)
@@ -909,65 +800,33 @@ def verify_boundary_size_predictor_diagnostics() -> bool:
     oracle.head_terminal_h = nn.Linear(d, 61, bias=False)
     oracle.head_terminal_w = nn.Linear(d, 61, bias=False)
 
-    """Verify Subgroup Non-Degeneracy Guard on Square Isometry (Task 142ca369 Test 2: 20x19 -> 20x19)"""
     s_in_m_iso = torch.zeros(1, 2, 20, 20, dtype=torch.bool)
     s_in_m_iso[0, 0, :20, :20] = True
     s_in_m_iso[0, 1, :18, :18] = True
-    s_out_m_iso = s_in_m_iso.clone()
-
     q_mask_19x20 = torch.zeros(1, 20, 20, dtype=torch.bool)
     q_mask_19x20[0, :20, :19] = True
-    h_f_19x20 = torch.zeros(1, 20, 20, d, dtype=torch.float32)
 
     _, _, pred_h_iso, pred_w_iso, _, _ = oracle(
-        h_field=h_f_19x20,
+        h_field=torch.zeros(1, 20, 20, d),
         mask=q_mask_19x20,
         support_in_masks=s_in_m_iso,
-        support_out_masks=s_out_m_iso,
+        support_out_masks=s_in_m_iso.clone(),
     )
     if int(pred_h_iso[0].item()) != 20 or int(pred_w_iso[0].item()) != 19:
         return False
 
-    """Verify Proper-Time Pullback Kernel on cropped sub-interval"""
-    mu_y = torch.zeros(1, 10, dtype=torch.float32)
-    mu_y[0, 2:5] = 1.0
-    mu_x = torch.zeros(1, 10, dtype=torch.float32)
-    mu_x[0, 3:7] = 1.0
-    h_in_test = torch.randn(1, 10, 10, d, dtype=torch.float32)
-    pulled_test, tau_y, tau_x = BoundaryMetricSizePredictor.compute_proper_time_pullback_kernel(mu_y, mu_x, h_in_test)
-    if pulled_test.shape != (1, 10, 10, d):
-        return False
-    if abs(float(tau_y[0, -1].item()) - 3.0) > 1e-4 or abs(float(tau_x[0, -1].item()) - 4.0) > 1e-4:
-        return False
-
-    h_field = torch.randn(b, h, w, d, dtype=torch.float32, requires_grad=True)
+    h_field = torch.randn(b, h, w, d, requires_grad=True)
     mask = torch.ones(b, h, w, dtype=torch.bool)
-    z_rule = torch.randn(b, d, dtype=torch.float32, requires_grad=True)
-    s_in_m = torch.ones(b, 2, h, w, dtype=torch.bool)
-    s_out_m = torch.ones(b, 2, h, w, dtype=torch.bool)
+    z_rule = torch.randn(b, d, requires_grad=True)
+    s_m = torch.ones(b, 2, h, w, dtype=torch.bool)
 
-    h_logits, w_logits, _, _, _, _ = oracle(
-        h_field=h_field,
-        mask=mask,
-        rule_context=z_rule,
-        support_in_masks=s_in_m,
-        support_out_masks=s_out_m,
-    )
-    term_field = torch.randn(b, h, w, d, dtype=torch.float32, requires_grad=True)
-    carrier_psi = torch.full((b, h, w, 1), 3.0, dtype=torch.float32, requires_grad=True)
+    h_logits, w_logits, _, _, _, _ = oracle(h_field, mask, rule_context=z_rule, support_in_masks=s_m, support_out_masks=s_m)
+    term_f = torch.randn(b, h, w, d, requires_grad=True)
+    c_psi = torch.full((b, h, w, 1), -3.0, requires_grad=True)
 
-    term_h_log, _, _, _, _, term_cap_ste = oracle.refine_with_terminal_carrier_mask(
-        base_h_logits=h_logits,
-        base_w_logits=w_logits,
-        terminal_field=term_field,
-        carrier_psi=carrier_psi,
-        in_masks=mask,
-        rule_context=z_rule,
-    )
-    loss_cap = torch.sum(term_h_log.pow(2)) + torch.sum((term_cap_ste - 36.0).pow(2))
-    loss_cap.backward()
-    if oracle.head_rel_h.weight.grad is None:
+    th_log, _, ph_neg, pw_neg, _, t_cap = oracle.refine_with_terminal_carrier_mask(h_logits, w_logits, term_f, c_psi, mask, z_rule)
+    if int(ph_neg[0].item()) != 20 or int(pw_neg[0].item()) != 20:
         return False
 
-    return True
-
+    (torch.sum(th_log.pow(2)) + torch.sum((t_cap - 36.0).pow(2))).backward()
+    return oracle.head_rel_h.weight.grad is not None

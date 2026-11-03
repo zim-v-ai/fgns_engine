@@ -91,7 +91,11 @@ class D4ReynoldsEnsembleEngine:
         pttsa_delta = getattr(model, "pttsa_rule_delta", None)
 
         amp_device = "cuda" if device.type == "cuda" else "cpu"
-        amp_enabled = device.type == "cuda"
+        amp_enabled = (
+            (device.type == "cuda")
+            and torch.cuda.is_available()
+            and (torch.cuda.get_device_capability(device)[0] >= 8)
+        )
 
         with torch.no_grad():
             for sym in d4_symmetries:

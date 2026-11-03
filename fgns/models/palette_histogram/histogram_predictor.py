@@ -1,8 +1,11 @@
 """
-Location: // fgns_engine/fgns/models/palette_budget/histogram_predictor.py
-Description: SOTA CuSOLVER-Free Schulz-Hotelling Dual Gram-Tikhonov & Sherman-Morrison
-             Palette Capacity Oracle with S10-Equivariant 8D Color Structural Role Fiber,
-             Diode Annihilation Sink, and NA3D Global Holonomy Conditioning (Equivariant Palette Histogram Predictor).
+Location: // fgns_engine/fgns/models/palette_histogram/histogram_predictor.py
+Description: Single-Equation S10-Equivariant Woodbury-Tikhonov & Sherman-Morrison Palette Histogram
+             Predictor with 8D Color Structural Role Fiber & Diode Annihilation Sink (FGNS v4.3.0):
+               1. Total elimination of multi-branch heuristic candidate lists: uses a single
+                  closed-form Woodbury-Tikhonov operator over the mass-cavity-role jet basis Phi(G).
+               2. S10-Equivariant 8D Structural Role conditioning and Diode Annihilation Sink.
+               3. Exact discrete apportionment via Differentiable Hamilton-Hare Largest Remainder Quota.
 Language: Python 3.12+ / PyTorch 2.5+ / Discrete Mass Conservation sm_120 Aligned
 Compliance: Zero-Hash Directives Strictly Enforced (Exclusively Docstrings for Comments)
 """
@@ -30,12 +33,12 @@ from fgns.types import PaletteBudgetPrediction
 
 DEFAULT_NUM_PALETTE_COLORS: Final[int] = 10
 DEFAULT_BUDGET_EPS: Final[float] = 1e-7
-TIKHONOV_LAMBDA: Final[float] = 0.05
+TIKHONOV_LAMBDA: Final[float] = 0.03
 
 
 class EquivariantPaletteHistogramPredictor(nn.Module):
     """
-    SOTA Dual Gram-Tikhonov, S10-Equivariant Structural Role & Diode Sink Palette Capacity Oracle.
+    Single-Equation Woodbury-Tikhonov, S10-Equivariant Structural Role & Diode Sink Palette Predictor.
     """
 
     NUM_COLORS: int = DEFAULT_NUM_PALETTE_COLORS
@@ -88,7 +91,7 @@ class EquivariantPaletteHistogramPredictor(nn.Module):
 
         self.prior_logit_gate = nn.Parameter(torch.tensor(0.0, dtype=torch.float32))
         self.equivariant_gate = nn.Parameter(torch.tensor(0.35, dtype=torch.float32))
-        self.residual_net_gate = nn.Parameter(torch.tensor(0.25, dtype=torch.float32))
+        self.residual_net_gate = nn.Parameter(torch.tensor(0.20, dtype=torch.float32))
         self.norm_rule = RMSNorm(d_model)
 
         self._reset_parameters()
@@ -182,15 +185,34 @@ class EquivariantPaletteHistogramPredictor(nn.Module):
         support_cavity_hist: Optional[torch.Tensor] = None,
         target_cavity_hist: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Single Closed-Form Woodbury-Tikhonov & Sherman-Morrison Resolvent in Simplex Space:
+            p_hat_out(G_t) = p_base(G_t) + Phi(G_t) W_Woodbury^*,
+            where W_Woodbury^* = Phi_S^T (Phi_S Phi_S^T + lambda I)^(-1) (p_out_S - p_base_S).
+        """
         B, K, C = s_in.shape
         B_t = t_in.shape[0]
         device = s_in.device
         dev_type = "cuda" if s_in.is_cuda else "cpu"
 
         with torch.amp.autocast(device_type=dev_type, enabled=False):
-            p_in_s = s_in.to(torch.float32) / k_out_s.to(torch.float32)
+            k_in_s = s_in.to(torch.float32).sum(dim=-1, keepdim=True).clamp_min(1.0)
+            k_in_t = t_in.to(torch.float32).sum(dim=-1, keepdim=True).clamp_min(1.0)
+
+            p_in_s = s_in.to(torch.float32) / k_in_s
             p_out_s = s_out.to(torch.float32) / k_out_s.to(torch.float32)
-            p_in_t = t_in.to(torch.float32) / k_out_t.to(torch.float32)
+            p_in_t = t_in.to(torch.float32) / k_in_t
+
+            p_scaled_s = s_in.to(torch.float32) / k_out_s.to(torch.float32)
+            p_scaled_t = t_in.to(torch.float32) / k_out_t.to(torch.float32)
+
+            fg_sum_s = s_in[:, :, 1:].to(torch.float32).sum(dim=-1, keepdim=True)
+            bg_rem_s = torch.clamp_min(k_out_s.to(torch.float32) - fg_sum_s, 0.0)
+            p_fg_cons_s = torch.cat([bg_rem_s, s_in[:, :, 1:].to(torch.float32)], dim=-1) / k_out_s.to(torch.float32)
+
+            fg_sum_t = t_in[:, 1:].to(torch.float32).sum(dim=-1, keepdim=True)
+            bg_rem_t = torch.clamp_min(k_out_t.to(torch.float32) - fg_sum_t, 0.0)
+            p_fg_cons_t = torch.cat([bg_rem_t, t_in[:, 1:].to(torch.float32)], dim=-1) / k_out_t.to(torch.float32)
 
             ones_s = torch.ones((B, K, 1), dtype=torch.float32, device=device)
             ones_t = torch.ones((B_t, 1), dtype=torch.float32, device=device)
@@ -198,11 +220,11 @@ class EquivariantPaletteHistogramPredictor(nn.Module):
             if support_cavity_hist is not None and target_cavity_hist is not None:
                 s_cav_norm = support_cavity_hist.to(torch.float32) / k_out_s.to(torch.float32)
                 t_cav_norm = target_cavity_hist.to(torch.float32) / k_out_t.to(torch.float32)
-                phi_s = torch.cat([ones_s, p_in_s, s_cav_norm], dim=-1)
-                phi_t = torch.cat([ones_t, p_in_t, t_cav_norm], dim=-1)
+                phi_s = torch.cat([ones_s, p_in_s, p_scaled_s - p_in_s, p_fg_cons_s - p_in_s, s_cav_norm], dim=-1)
+                phi_t = torch.cat([ones_t, p_in_t, p_scaled_t - p_in_t, p_fg_cons_t - p_in_t, t_cav_norm], dim=-1)
             else:
-                phi_s = torch.cat([ones_s, p_in_s], dim=-1)
-                phi_t = torch.cat([ones_t, p_in_t], dim=-1)
+                phi_s = torch.cat([ones_s, p_in_s, p_scaled_s - p_in_s, p_fg_cons_s - p_in_s], dim=-1)
+                phi_t = torch.cat([ones_t, p_in_t, p_scaled_t - p_in_t, p_fg_cons_t - p_in_t], dim=-1)
 
             M = phi_s.shape[-1]
             sqrt_w = torch.sqrt(w_conj.to(torch.float32).clamp_min(0.0))
@@ -225,12 +247,12 @@ class EquivariantPaletteHistogramPredictor(nn.Module):
             diag_h = torch.diagonal(hat_mat, dim1=-2, dim2=-1).unsqueeze(-1)
             leverage_denom = torch.clamp_min(1.0 - diag_h, 0.20)
 
-            p_out_w = p_out_s * sqrt_w
-            pred_p_s_w = torch.bmm(hat_mat, p_out_w)
-            loo_residual_s = torch.abs(p_out_w - pred_p_s_w) / leverage_denom
+            delta_p_s_w = (p_out_s - p_in_s) * sqrt_w
+            pred_delta_s_w = torch.bmm(hat_mat, delta_p_s_w)
+            loo_residual_s = torch.abs(delta_p_s_w - pred_delta_s_w) / leverage_denom
             err_sherman_morrison = loo_residual_s.sum(dim=-1).sum(dim=-1, keepdim=True)
 
-            dual_alpha = torch.bmm(gram_inv, p_out_w)
+            dual_alpha = torch.bmm(gram_inv, delta_p_s_w)
             w_operator = torch.bmm(phi_s_w.transpose(1, 2), dual_alpha)
 
             if B_t == B * K:
@@ -238,8 +260,8 @@ class EquivariantPaletteHistogramPredictor(nn.Module):
             else:
                 w_op_t = w_operator
 
-            pred_p_t_raw = torch.bmm(phi_t.view(B_t, 1, M), w_op_t).squeeze(1)
-            pred_p_t = F.relu(pred_p_t_raw)
+            pred_delta_t = torch.bmm(phi_t.view(B_t, 1, M), w_op_t).squeeze(1)
+            pred_p_t = F.relu(p_in_t + pred_delta_t)
             pred_p_t = pred_p_t / pred_p_t.sum(dim=-1, keepdim=True).clamp_min(1e-6)
 
         return pred_p_t, err_sherman_morrison
@@ -257,13 +279,16 @@ class EquivariantPaletteHistogramPredictor(nn.Module):
         target_cavity_hist: Optional[torch.Tensor] = None,
         support_cavity_hist: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        """
+        Evaluates the Single-Equation Woodbury-Tikhonov Palette Prior (retained under
+        canonical method name for backward compatibility across callers).
+        """
         B, K, C = support_in_hist.shape
         dev_type = "cuda" if support_in_hist.is_cuda else "cpu"
 
         with torch.amp.autocast(device_type=dev_type, enabled=False):
             s_in = support_in_hist.to(torch.float32)
             s_out = support_out_hist.to(torch.float32)
-            k_in_s = s_in.sum(dim=-1, keepdim=True).clamp_min(1.0)
             k_out_s = s_out.sum(dim=-1, keepdim=True).clamp_min(1.0)
 
             if pair_valid_mask is not None:
@@ -275,46 +300,13 @@ class EquivariantPaletteHistogramPredictor(nn.Module):
             if exemplar_weights is not None and exemplar_weights.ndim == 2:
                 w_res = (exemplar_weights.to(torch.float32).view(B, K, 1) * v_mask)
                 w_sum = w_res.sum(dim=1, keepdim=True)
-                w_res = torch.where(w_sum > 1e-6, w_res / w_sum.clamp_min(1e-6), w_conj)
-            else:
-                w_res = w_conj
-
-            mean_delta_n = ((s_out - s_in) * w_conj).sum(dim=1, keepdim=True)
-            mean_n_out = (s_out * w_conj).sum(dim=1, keepdim=True)
-
-            fg_sum_s = s_in[:, :, 1:].sum(dim=-1, keepdim=True)
-            bg_rem_s = torch.clamp_min(k_out_s - fg_sum_s, 0.0)
-            pred_s_1 = torch.cat([bg_rem_s, s_in[:, :, 1:]], dim=-1)
-
-            area_ratio_s = k_out_s / k_in_s
-            pred_s_2 = torch.round(s_in * area_ratio_s)
-
-            pred_s_3 = torch.clamp_min(s_in + torch.round(mean_delta_n), 0.0)
-
-            pred_s_4 = torch.round(mean_n_out).expand(B, K, C)
-
-            fg_sq_s = s_in[:, :, 1:].pow(2)
-            bg_sq_s = torch.clamp_min(k_out_s - fg_sq_s.sum(dim=-1, keepdim=True), 0.0)
-            pred_s_5 = torch.cat([bg_sq_s, fg_sq_s], dim=-1)
-
-            max_fg_in_s = torch.max(s_in[:, :, 1:], dim=-1, keepdim=True)[0]
-            dom_out_col_s = torch.argmax(s_out[:, :, 1:], dim=-1) + 1
-            one_hot_dom_s = F.one_hot(dom_out_col_s, num_classes=C).to(torch.float32)
-            fg_recol_s = one_hot_dom_s * max_fg_in_s
-            bg_recol_s = torch.clamp_min(k_out_s - max_fg_in_s, 0.0)
-            pred_s_6 = fg_recol_s.clone()
-            pred_s_6[:, :, 0:1] = bg_recol_s
+                w_conj = torch.where(w_sum > 1e-6, w_res / w_sum.clamp_min(1e-6), w_conj)
 
             t_in = target_in_hist.to(torch.float32)
             B_t = t_in.shape[0]
-            k_in_t = t_in.sum(dim=-1, keepdim=True).clamp_min(1.0)
             k_out_t = target_k_out.to(torch.float32).view(B_t, 1).clamp_min(1.0)
 
-            preds_s_6 = torch.stack([pred_s_1, pred_s_2, pred_s_3, pred_s_4, pred_s_5, pred_s_6], dim=2)
-            abs_diff_6 = torch.abs(preds_s_6 - s_out.unsqueeze(2)).sum(dim=-1) / k_out_s
-            err_6_laws = (abs_diff_6 * w_conj).sum(dim=1)
-
-            cand_7, err_tikhonov = cls.compute_dual_gram_tikhonov_resolvent(
+            p_woodbury, _ = cls.compute_dual_gram_tikhonov_resolvent(
                 s_in=s_in,
                 s_out=s_out,
                 k_out_s=k_out_s,
@@ -325,51 +317,7 @@ class EquivariantPaletteHistogramPredictor(nn.Module):
                 target_cavity_hist=target_cavity_hist,
             )
 
-            err_per_law = torch.cat([err_6_laws, err_tikhonov], dim=-1)
-
-            min_law_err = torch.min(err_per_law, dim=-1, keepdim=True)[0]
-            beta_bose = 15.0 / (min_law_err + 0.25)
-            law_weights = F.softmax(-beta_bose * err_per_law, dim=-1)
-
-            weighted_fg_out = (s_out[:, :, 1:] * w_res).sum(dim=1)
-            res_dom_col_q = torch.argmax(weighted_fg_out, dim=-1) + 1
-            one_hot_res_dom = F.one_hot(res_dom_col_q, num_classes=C).to(torch.float32)
-
-            if B_t == B * K:
-                w_t = law_weights.repeat_interleave(K, dim=0)
-                dn_t = mean_delta_n.squeeze(1).repeat_interleave(K, dim=0)
-                nout_t = mean_n_out.squeeze(1).repeat_interleave(K, dim=0)
-                oh_dom_t = one_hot_res_dom.repeat_interleave(K, dim=0)
-            else:
-                w_t = law_weights
-                dn_t = mean_delta_n.squeeze(1)
-                nout_t = mean_n_out.squeeze(1)
-                oh_dom_t = one_hot_res_dom
-
-            fg_sum_t = t_in[:, 1:].sum(dim=-1, keepdim=True)
-            bg_rem_t = torch.clamp_min(k_out_t - fg_sum_t, 0.0)
-            cand_1 = torch.cat([bg_rem_t, t_in[:, 1:]], dim=-1) / k_out_t
-
-            cand_2 = (t_in * (k_out_t / k_in_t)) / k_out_t
-            cand_3 = torch.clamp_min(t_in + dn_t, 0.0) / k_out_t
-            cand_4 = torch.clamp_min(nout_t, 0.0) / k_out_t.clamp_min(1.0)
-
-            fg_sq_t = t_in[:, 1:].pow(2)
-            bg_sq_t = torch.clamp_min(k_out_t - fg_sq_t.sum(dim=-1, keepdim=True), 0.0)
-            cand_5 = torch.cat([bg_sq_t, fg_sq_t], dim=-1) / k_out_t
-
-            max_fg_t = torch.max(t_in[:, 1:], dim=-1, keepdim=True)[0]
-            cand_6_counts = oh_dom_t * max_fg_t
-            cand_6_counts[:, 0:1] = torch.clamp_min(k_out_t - max_fg_t, 0.0)
-            cand_6 = cand_6_counts / k_out_t
-
-            cands_stack = torch.stack([cand_1, cand_2, cand_3, cand_4, cand_5, cand_6, cand_7], dim=1)
-            cands_norm = cands_stack / cands_stack.sum(dim=-1, keepdim=True).clamp_min(1e-6)
-
-            p_analytic = torch.sum(w_t.unsqueeze(-1) * cands_norm, dim=1)
-            p_final = p_analytic / p_analytic.sum(dim=-1, keepdim=True).clamp_min(1e-6)
-
-        return p_final
+        return p_woodbury
 
     @staticmethod
     def reapportion_with_terminal_capacity(
@@ -546,7 +494,7 @@ class EquivariantPaletteHistogramPredictor(nn.Module):
         )
         p_net = F.softmax(torch.log(torch.clamp_min(p_prior, 1e-6)) + net_residual, dim=-1)
 
-        mix_alpha = 0.25 * torch.sigmoid(self.residual_net_gate)
+        mix_alpha = 0.20 * torch.sigmoid(self.residual_net_gate)
         raw_simplex = ((1.0 - mix_alpha) * p_prior) + (mix_alpha * p_net)
 
         hare_simplex = raw_simplex * active_mask_f32
@@ -656,4 +604,3 @@ def verify_histogram_predictor_diagnostics() -> bool:
         return False
 
     return True
-

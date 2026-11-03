@@ -22,6 +22,9 @@ from typing import Dict, Final, List, Optional, Sequence, Tuple, Union
 DEFAULT_SEARCH_ROOTS: Final[Tuple[str, ...]] = (
     "data",
     "../data",
+    "/kaggle/input/competitions/arc-prize-2026-arc-agi-2",
+    "/kaggle/input/arc-prize-2026-arc-agi-2",
+    "/kaggle/input/datasets",
     "/kaggle/input",
     ".",
     "..",
@@ -45,6 +48,26 @@ class DatasetPathResolver:
     def clear_cache(cls) -> None:
         """Clears the in-memory path resolution cache."""
         cls._resolved_path_cache.clear()
+
+    @staticmethod
+    def _generate_filename_variants(pure_name: str) -> Tuple[str, ...]:
+        """
+        Generates canonical underscore and hyphen variants for ARC-AGI challenge/solution files
+        to seamlessly handle both 'arc-agi_test_challenges.json' and 'arc-agi_test-challenges.json'.
+        """
+        variants: List[str] = [pure_name]
+        swaps = (
+            ("_challenges.json", "-challenges.json"),
+            ("-challenges.json", "_challenges.json"),
+            ("_solutions.json", "-solutions.json"),
+            ("-solutions.json", "_solutions.json"),
+        )
+        for src_pat, dst_pat in swaps:
+            if src_pat in pure_name:
+                alt = pure_name.replace(src_pat, dst_pat)
+                if alt not in variants:
+                    variants.append(alt)
+        return tuple(variants)
 
     @classmethod
     def resolve_path(
@@ -79,6 +102,7 @@ class DatasetPathResolver:
             return resolved
 
         pure_name = target_as_path.name
+        name_variants = cls._generate_filename_variants(pure_name)
 
         """2. Probing Direct Sub-paths in Candidate Roots"""
         for root_str in candidate_roots:
@@ -93,12 +117,13 @@ class DatasetPathResolver:
                     cls._resolved_path_cache[filename_str] = resolved
                 return resolved
 
-            direct_by_name = root_path / pure_name
-            if direct_by_name.is_file():
-                resolved = direct_by_name.resolve()
-                if use_cache:
-                    cls._resolved_path_cache[filename_str] = resolved
-                return resolved
+            for var_name in name_variants:
+                direct_by_name = root_path / var_name
+                if direct_by_name.is_file():
+                    resolved = direct_by_name.resolve()
+                    if use_cache:
+                        cls._resolved_path_cache[filename_str] = resolved
+                    return resolved
 
         """3. Recursive Deep Globbing across Candidate Roots (Kaggle Dataset Mounts)"""
         for root_str in candidate_roots:
@@ -106,15 +131,16 @@ class DatasetPathResolver:
             if not root_path.exists() or not root_path.is_dir():
                 continue
 
-            try:
-                for match in root_path.glob(f"**/{pure_name}"):
-                    if match.is_file():
-                        resolved = match.resolve()
-                        if use_cache:
-                            cls._resolved_path_cache[filename_str] = resolved
-                        return resolved
-            except (PermissionError, OSError):
-                continue
+            for var_name in name_variants:
+                try:
+                    for match in root_path.glob(f"**/{var_name}"):
+                        if match.is_file():
+                            resolved = match.resolve()
+                            if use_cache:
+                                cls._resolved_path_cache[filename_str] = resolved
+                            return resolved
+                except (PermissionError, OSError):
+                    continue
 
         """Fallback: Return normalized path even if missing to allow caller handling"""
         fallback_path = target_as_path.resolve()
@@ -149,12 +175,16 @@ class DatasetPathResolver:
             solutions_name = f"{challenges_path.stem}_solutions{challenges_path.suffix}"
 
         solutions_path: Optional[Path] = None
+        sol_variants = cls._generate_filename_variants(solutions_name)
 
         """Probe adjacent location first"""
-        adjacent_candidate = challenges_path.parent / solutions_name
-        if adjacent_candidate.is_file():
-            solutions_path = adjacent_candidate.resolve()
-        else:
+        for sol_var in sol_variants:
+            adjacent_candidate = challenges_path.parent / sol_var
+            if adjacent_candidate.is_file():
+                solutions_path = adjacent_candidate.resolve()
+                break
+
+        if solutions_path is None:
             discovered_sol = cls.resolve_path(solutions_name, use_cache=use_cache)
             if discovered_sol.is_file():
                 solutions_path = discovered_sol
@@ -315,6 +345,17 @@ def verify_path_resolver_diagnostics() -> bool:
             use_cache=False,
         )
         if resolved_dir is None or not resolved_dir.is_dir() or resolved_dir != nested_dir.resolve():
+            return False
+
+        """6. Test Underscore vs Hyphen Filename Alias Resolution"""
+        hyphen_chal = nested_dir / "arc-agi_evaluation-challenges.json"
+        hyphen_chal.write_text("{}", encoding="utf-8")
+        resolved_alias = DatasetPathResolver.resolve_path(
+            "arc-agi_evaluation_challenges.json",
+            candidate_roots=candidate_roots,
+            use_cache=False,
+        )
+        if not resolved_alias.is_file() or resolved_alias != hyphen_chal.resolve():
             return False
 
     DatasetPathResolver.clear_cache()

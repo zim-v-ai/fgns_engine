@@ -1,15 +1,12 @@
 """
 Location: // fgns_engine/fgns/train/losses/focal_canvas.py
-Description: SOTA Hermetic Active-Grid Focal Loss Engine with Area-Density Normalization
-             and Asymmetric False-Positive Background Halo Suppression.
-             Core Mathematical Supervisor for FGNS v1.1.0 (Finsler-Gauge Sheaf):
-               1. Confines focal cross-entropy strictly inside the active target grid mask.
-               2. Total elimination of exterior padding loss, preventing token 10 bias hijacking of active colors.
-               3. Area-Density Gradient Normalization: Normalizes loss by physical active grid pixels.
-               4. Asymmetric False-Positive Halo Suppressor: penalizes dominant non-zero color spikes
-                  (max_{c=1..9} P_c > 0.20) on ground-truth background pixels (y == 0), converting
-                  Ext_FG near-misses directly into 100% Ext_Full exact grid matches!
-               5. Logit-space saturation clamping [-25.0, +25.0] eliminating FP16/BF16 NaN generation.
+Description: SOTA Active-Domain 10-Color Simplex Focal Loss Engine with Area-Density Normalization
+             and Asymmetric False-Positive Background Halo Suppression (FGNS v4.4.0):
+               1. Pure 10-Color Simplex Projection (Delta^9): evaluates log_softmax strictly over
+                  active domain colors 0..9 inside target_masks, completely decoupling color
+                  classification (Val Q) from carrier mask boundary fluctuations!
+               2. Area-Density Gradient Normalization by physical active grid pixels.
+               3. Asymmetric False-Positive Halo Suppressor penalizing foreground spikes on y == 0.
 Invariants: Strict non-negativity L >= 0, zero gradient on exterior padding (dL/dZ_ext == 0),
             exact fg/bg weight ratio on uniform initialization, zero hash comment compliance.
 Language: Python 3.12+ / PyTorch 2.5+ / Loss Landscape Optimization sm_120 Aligned
@@ -41,9 +38,7 @@ DEFAULT_LOSS_EPS: Final[float] = 1e-7
 
 class ActiveDomainFocalLoss(nn.Module):
     """
-    SOTA Hermetic Active-Grid Focal Loss Engine with False-Positive Halo Suppression.
-    Supervises discrete color classification strictly within the active target mask.
-    Eliminates exterior token 10 padding bias and suppresses false-positive colored pixels on background.
+    SOTA Active-Domain 10-Color Simplex Focal Loss Engine with False-Positive Halo Suppression.
     """
 
     def __init__(
@@ -88,46 +83,33 @@ class ActiveDomainFocalLoss(nn.Module):
         return_telemetry: bool = False,
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, Dict[str, float]]]:
         """
-        Evaluates hermetic area-normalized focal loss strictly inside target_masks.
-
-        Args:
-            logits: Predicted class logits [Batch, H, W, VocabSize] float32/bf16.
-            targets: Discrete ground truth tokens [Batch, H, W] int64.
-            target_masks: Active grid boolean mask [Batch, H, W] bool (True=Active Grid, False=Pad).
-            return_telemetry: Optional flag returning fine-grained diagnostic metrics.
-
-        Returns:
-            total_loss: Differentiable scalar optimization objective.
-            telemetry: Optional dictionary containing loss breakdown metrics.
+        Evaluates area-normalized focal loss over the 10-color simplex inside target_masks.
         """
         B, H, W, V = logits.shape
         L = H * W
         device = logits.device
 
-        """1. Logit Sanitization & Numerical Clamping"""
-        logits_clamped = torch.clamp(logits.to(torch.float32), -self.logit_clamp, self.logit_clamp)
-        log_probs = F.log_softmax(logits_clamped, dim=-1)
+        c_dim = min(10, V)
+        color_logits_clamped = torch.clamp(logits[..., :c_dim].to(torch.float32), -self.logit_clamp, self.logit_clamp)
+        log_probs = F.log_softmax(color_logits_clamped, dim=-1)
         probs = torch.exp(log_probs)
 
-        flat_log_probs = log_probs.view(B, L, V)
-        flat_probs = probs.view(B, L, V)
+        flat_log_probs = log_probs.view(B, L, c_dim)
+        flat_probs = probs.view(B, L, c_dim)
 
-        flat_targets = targets.view(B, L).clamp(0, V - 1)
+        flat_targets = targets.view(B, L).clamp(0, c_dim - 1)
         is_active = target_masks.float().view(B, L)
 
-        """2. Extract Probabilities and Log-Probabilities of Ground Truth Classes"""
         target_indices = flat_targets.unsqueeze(-1)
         gathered_log_p = flat_log_probs.gather(dim=-1, index=target_indices).squeeze(-1)
         gathered_p = flat_probs.gather(dim=-1, index=target_indices).squeeze(-1)
 
-        """3. Differentiable Label Smoothing Form"""
         if self.label_smoothing > 0.0:
             mean_log_p = flat_log_probs.mean(dim=-1)
             smooth_nll = -(1.0 - self.label_smoothing) * gathered_log_p - self.label_smoothing * mean_log_p
         else:
             smooth_nll = -gathered_log_p
 
-        """4. Focal Error Residual and C-Infinity Smooth Hard-Pixel Modulation"""
         error_residual = torch.clamp(1.0 - gathered_p, 0.0, 1.0)
         focal_modulation = error_residual.pow(self.gamma)
 
@@ -143,23 +125,17 @@ class ActiveDomainFocalLoss(nn.Module):
 
         base_loss_field = smooth_nll * focal_modulation * hard_pixel_multiplier * class_factors
 
-        """
-        5. Asymmetric False-Positive Background Halo Suppressor:
-        When ground-truth pixel is background (y == 0) and any foreground color c in {1..9}
-        exceeds halo_thresh (0.20), applies targeted quadratic suppression to eliminate 1-pixel haloes!
-        """
-        if self.halo_lambda > 0.0 and V >= 10:
+        if self.halo_lambda > 0.0 and c_dim >= 10:
             is_bg_target = (flat_targets == 0).to(torch.float32)
             max_fg_prob = flat_probs[:, :, 1:10].max(dim=-1)[0]
             halo_excess = F.relu(max_fg_prob - self.halo_thresh)
             halo_penalty_field = self.halo_lambda * is_bg_target * halo_excess.pow(2)
             base_loss_field = base_loss_field + halo_penalty_field
 
-        """6. Hermetic Active Grid Normalization"""
         active_normalizer = is_active.sum(dim=-1).clamp_min(1.0)
         masked_loss_per_batch = (base_loss_field * is_active).sum(dim=-1) / active_normalizer
 
-        total_loss = masked_loss_per_batch.mean()
+        total_loss = masked_loss_per_batch.mean() + (0.0 * torch.sum(logits[..., c_dim:].to(torch.float32)))
 
         if return_telemetry:
             with torch.no_grad():
@@ -249,4 +225,3 @@ def verify_focal_canvas_diagnostics() -> bool:
         return False
 
     return True
-

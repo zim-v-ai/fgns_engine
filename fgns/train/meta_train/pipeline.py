@@ -144,6 +144,10 @@ class MetaTrainingPipeline:
 
         use_fused = torch.cuda.is_available() and self.device.type == "cuda"
 
+        for name, param in self.model.named_parameters():
+            if name.startswith("projector.palette"):
+                param.requires_grad = False
+
         model_params = [p for n, p in self.model.named_parameters() if p.requires_grad]
         model_params.extend([p for p in self.codebook.parameters() if p.requires_grad])
 

@@ -1,9 +1,9 @@
 """
 Location: // fgns_engine/fgns/primitives/stiefel_sheaf.py
-Description: SOTA Continuous Cellular Sheaf Operator on Stiefel Manifolds V_k(R^d),
-             Gauge-Equivariant Non-Abelian 3D Finsler-Lie Token Engine v2.0 (NA3D-CfC) with
-             2x2 Plaquette Yang-Mills-Wilson Holonomy, Bravais Dislocation Resonance,
-             and Zero-Loop Vectorized 12-Ray Moore Sheaf Diffusion.
+Description: Continuous Cellular Sheaf Operator on Stiefel Manifolds V_k(R^d),
+             Degree-Normalized Positive-Definite Sheaf Laplacian Diffusion,
+             Anisotropic Edge-Stopping Perona-Malik-Randers 12-Ray Spatial Sheaf,
+             and Gauge-Equivariant NA3D-Finsler-Lie v3.0 Engine with Casimir-Chiral Observables (FGNS v4.3.0).
 Language: Python 3.12+ / PyTorch 2.5+ / Cellular Sheaf & Finsler-Lie Geometry sm_120 Aligned
 Compliance: Zero-Hash Directives Strictly Enforced (Exclusively Docstrings for Comments)
 """
@@ -24,7 +24,7 @@ DEFAULT_D_NODE: Final[int] = 128
 DEFAULT_D_EDGE: Final[int] = 32
 DEFAULT_STIEFEL_EPS: Final[float] = 1e-6
 NEWTON_SCHULZ_SAFE_ALPHA: Final[float] = 1.75
-MIN_CONDUCTANCE_FLOOR: Final[float] = 0.20
+MIN_CONDUCTANCE_FLOOR: Final[float] = 0.05
 NA3D_CELL_STRIDE: Final[int] = 16
 
 
@@ -41,42 +41,54 @@ def newton_schulz_stiefel_5th_order(
     iterations: int = DEFAULT_STIEFEL_NS_ITERS,
     eps: float = DEFAULT_STIEFEL_EPS,
 ) -> torch.Tensor:
+    """
+    Projects raw matrix onto the compact Stiefel manifold V_{d_edge}(R^{d_node})
+    using 5th-order Newton-Schulz iterations in strict IEEE-754 FP32 precision.
+    """
     target_dtype = w_raw.dtype
     dev_type = "cuda" if w_raw.is_cuda else "cpu"
+    prev_tf32 = torch.backends.cuda.matmul.allow_tf32 if torch.cuda.is_available() else False
 
-    with torch.amp.autocast(device_type=dev_type, enabled=False):
-        w_f32 = w_raw.to(torch.float32)
+    try:
+        if torch.cuda.is_available():
+            torch.backends.cuda.matmul.allow_tf32 = False
 
-        d_edge = w_f32.shape[-2]
-        d_node = w_f32.shape[-1]
+        with torch.amp.autocast(device_type=dev_type, enabled=False):
+            w_f32 = w_raw.to(torch.float32)
 
-        if d_edge > d_node:
-            raise ValueError(
-                f"Stiefel manifold requires d_edge ({d_edge}) <= d_node ({d_node})."
-            )
+            d_edge = w_f32.shape[-2]
+            d_node = w_f32.shape[-1]
 
-        effective_iters = max(3, int(iterations))
+            if d_edge > d_node:
+                raise ValueError(
+                    f"Stiefel manifold requires d_edge ({d_edge}) <= d_node ({d_node})."
+                )
 
-        frob_sq = torch.sum(w_f32 * w_f32, dim=(-2, -1), keepdim=True)
-        frob_norm = torch.sqrt(frob_sq + eps)
+            effective_iters = max(3, int(iterations))
 
-        scale_factor = math.sqrt(NEWTON_SCHULZ_SAFE_ALPHA)
-        y_k = (w_f32 / frob_norm) * scale_factor
+            frob_sq = torch.sum(w_f32 * w_f32, dim=(-2, -1), keepdim=True)
+            frob_norm = torch.sqrt(frob_sq + eps)
 
-        eye_d_edge = torch.eye(d_edge, dtype=torch.float32, device=w_raw.device)
-        eye = eye_d_edge.view(*([1] * (w_raw.dim() - 2)), d_edge, d_edge)
+            scale_factor = math.sqrt(NEWTON_SCHULZ_SAFE_ALPHA)
+            y_k = (w_f32 / frob_norm) * scale_factor
 
-        for _ in range(effective_iters):
-            y_k_t = y_k.transpose(-2, -1)
-            a_k = torch.matmul(y_k, y_k_t)
-            a_k_sq = torch.matmul(a_k, a_k)
+            eye_d_edge = torch.eye(d_edge, dtype=torch.float32, device=w_raw.device)
+            eye = eye_d_edge.view(*([1] * (w_raw.dim() - 2)), d_edge, d_edge)
 
-            poly = 0.125 * ((15.0 * eye) - (10.0 * a_k) + (3.0 * a_k_sq))
-            y_k = torch.matmul(poly, y_k)
+            for _ in range(effective_iters):
+                y_k_t = y_k.transpose(-2, -1)
+                a_k = torch.matmul(y_k, y_k_t)
+                a_k_sq = torch.matmul(a_k, a_k)
 
-        row_sq = torch.sum(y_k * y_k, dim=-1, keepdim=True)
-        row_norm = torch.sqrt(row_sq + eps)
-        w_ortho = y_k / row_norm
+                poly = 0.125 * ((15.0 * eye) - (10.0 * a_k) + (3.0 * a_k_sq))
+                y_k = torch.matmul(poly, y_k)
+
+            row_sq = torch.sum(y_k * y_k, dim=-1, keepdim=True)
+            row_norm = torch.sqrt(row_sq + eps)
+            w_ortho = y_k / row_norm
+    finally:
+        if torch.cuda.is_available():
+            torch.backends.cuda.matmul.allow_tf32 = prev_tf32
 
     return w_ortho.to(target_dtype)
 
@@ -116,9 +128,9 @@ def stiefel_orthogonality_penalty(
 
 class NA3DFinslerLieEngine(nn.Module):
     """
-    SOTA Singularity-Free Isochoric Non-Linear Asymmetric 3D Token Engine v2.0 on Finsler-Lie Bundles.
+    Singularity-Free Isochoric Non-Linear Asymmetric 3D Token Engine v3.0 on Finsler-Lie Bundles.
     Features Gauge-Equivariant C x C SO(3) Frame Mixing, 2x2 Yang-Mills-Wilson Plaquette Curvature,
-    and Bravais Lattice Dislocation Resonance (chi_3) for periodic error correction.
+    Bravais Lattice Dislocation Resonance, and 32D Casimir-Chiral Gauge Observables.
     """
 
     def __init__(
@@ -140,7 +152,6 @@ class NA3DFinslerLieEngine(nn.Module):
         self.cell_gate_proj = nn.Linear(4 * self.num_cells, self.num_cells * 3, bias=True)
         self.channel_mixer = nn.Linear(d_node, d_node, bias=False)
 
-        """Gauge-Equivariant C x C Frame Mixing Weight preserving 3D vector coordinates (x, y, z)"""
         self.frame_mix_weight = nn.Parameter(torch.eye(self.num_cells, dtype=torch.float32) * 0.25)
         self.bravais_heal_gate = nn.Parameter(torch.tensor(0.25, dtype=torch.float32))
 
@@ -167,6 +178,50 @@ class NA3DFinslerLieEngine(nn.Module):
         return v_rot
 
     @classmethod
+    def extract_casimir_chiral_observables(
+        cls,
+        h_before: torch.Tensor,
+        h_after: torch.Tensor,
+        mask: torch.Tensor,
+        eps: float = DEFAULT_STIEFEL_EPS,
+    ) -> torch.Tensor:
+        """
+        Extracts the 32-dimensional (4 * C) Non-Linear Asymmetric Casimir-Chiral Gauge Observables:
+          I_1^(c) = tanh(det[L_after, C_after, R_after])                  (3D Chiral Volume)
+          I_2^(c) = tanh(<beta, L_after x R_after>)                       (Randers Helicity)
+          I_3^(c) = tanh(<C_after - C_before, L_after - R_after>)         (Diode Core-Shift Work)
+          I_4^(c) = 1 - <C_after, C_before> / (||C_after|| ||C_before||)  (Geodesic Torsion Defect)
+        """
+        B, H, W, D = h_after.shape
+        num_cells = max(1, D // NA3D_CELL_STRIDE)
+        if D % NA3D_CELL_STRIDE != 0:
+            return torch.zeros((B, H, W, 4 * num_cells), dtype=h_after.dtype, device=h_after.device)
+
+        dev_type = "cuda" if h_after.is_cuda else "cpu"
+        with torch.amp.autocast(device_type=dev_type, enabled=False):
+            m_5d = mask.to(torch.float32).view(B, H, W, 1, 1)
+            b_cells = h_before.to(torch.float32).view(B, H, W, num_cells, NA3D_CELL_STRIDE) * m_5d
+            a_cells = h_after.to(torch.float32).view(B, H, W, num_cells, NA3D_CELL_STRIDE) * m_5d
+
+            c_0 = b_cells[..., 3:6]
+            l_a = a_cells[..., 0:3]
+            c_a = a_cells[..., 3:6]
+            r_a = a_cells[..., 6:9]
+            beta_a = torch.tanh(a_cells[..., 9:12])
+
+            i1_chiral_vol = torch.tanh(torch.sum(l_a * torch.cross(c_a, r_a, dim=-1), dim=-1, keepdim=True))
+            i2_helicity = torch.tanh(torch.sum(beta_a * torch.cross(l_a, r_a, dim=-1), dim=-1, keepdim=True))
+            i3_diode_work = torch.tanh(torch.sum((c_a - c_0) * (l_a - r_a), dim=-1, keepdim=True))
+
+            norm_ca = torch.sqrt(torch.sum(c_a * c_a, dim=-1, keepdim=True) + eps)
+            norm_c0 = torch.sqrt(torch.sum(c_0 * c_0, dim=-1, keepdim=True) + eps)
+            cos_sim = torch.sum(c_a * c_0, dim=-1, keepdim=True) / (norm_ca * norm_c0 + eps)
+            i4_torsion_defect = (1.0 - cos_sim.clamp(-1.0, 1.0)) * m_5d
+
+            obs_4c = torch.cat([i1_chiral_vol, i2_helicity, i3_diode_work, i4_torsion_defect], dim=-1) * m_5d
+            return obs_4c.view(B, H, W, 4 * num_cells).to(h_after.dtype)
+
+    @classmethod
     def enforce_isochoric_frame_projection(
         cls,
         h_anchor: torch.Tensor,
@@ -175,9 +230,6 @@ class NA3DFinslerLieEngine(nn.Module):
         blend_gain: float = 0.15,
         eps: float = DEFAULT_STIEFEL_EPS,
     ) -> torch.Tensor:
-        """
-        Singularity-Free Isochoric Frame-Preserving Projection in pure FP32.
-        """
         orig_shape = h_perturbed.shape
         D = orig_shape[-1]
         if D % NA3D_CELL_STRIDE != 0:
@@ -194,9 +246,8 @@ class NA3DFinslerLieEngine(nn.Module):
             a_cells = (h_anchor.to(torch.float32) * mask_f32).view(*orig_shape[:-1], num_cells, NA3D_CELL_STRIDE)
             p_cells = (h_perturbed.to(torch.float32) * mask_f32).view(*orig_shape[:-1], num_cells, NA3D_CELL_STRIDE)
 
-            l_a = a_cells[..., 0:3]
-            c_a = a_cells[..., 3:6]
             r_a = a_cells[..., 6:9]
+            c_a = a_cells[..., 3:6]
 
             l_p = p_cells[..., 0:3]
             c_p = p_cells[..., 3:6]
@@ -340,7 +391,6 @@ class NA3DFinslerLieEngine(nn.Module):
             )
             c_nb_weighted = torch.sum(w_conductance * c_nb_transported, dim=1)
 
-            """Bravais Lattice Dislocation Resonance (chi_3) at period step T=2"""
             c_flat_ch = c_core.reshape(B, H, W, self.num_cells * 3).permute(0, 3, 1, 2)
             c_pad_2 = F.pad(c_flat_ch, (2, 2, 2, 2), mode="replicate").permute(0, 2, 3, 1)
             c_up2 = c_pad_2[:, :-4, 2:-2, :].view(B, H, W, self.num_cells, 3)
@@ -389,7 +439,6 @@ class NA3DFinslerLieEngine(nn.Module):
                 dim=-1,
             )
 
-            """Gauge-Equivariant C x C Frame Mixing preserving 3D vector coordinates"""
             w_f = self.frame_mix_weight.to(torch.float32)
             c_frame_mixed = torch.einsum("cd,bhwdk->bhwck", w_f, c_iso_rotated)
 
@@ -413,7 +462,7 @@ class NA3DFinslerLieEngine(nn.Module):
 
 class CellularSheafOperator(nn.Module):
     """
-    SOTA Continuous Cellular Sheaf Operator on Stiefel Manifolds V_k(R^d) for Object Slots.
+    Continuous Cellular Sheaf Operator on Stiefel Manifolds V_k(R^d) for Object Slots.
     """
 
     def __init__(
@@ -441,6 +490,7 @@ class CellularSheafOperator(nn.Module):
             nn.SiLU(),
             nn.Linear(self.d_node, self.d_edge * self.d_node, bias=False),
         )
+        self.norm_stalk = RMSNorm(self.d_node)
 
         r_init = torch.zeros(self.d_edge, self.d_edge, dtype=torch.float32)
         for i in range(self.d_edge):
@@ -475,6 +525,24 @@ class CellularSheafOperator(nn.Module):
         w_ortho = self.project_stiefel_5th_order(w_raw)
         return w_ortho
 
+    def _compute_normalized_edge_conductance(
+        self,
+        v_local: torch.Tensor,
+        port_conductance: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        b, k, d_e = v_local.shape
+        if port_conductance is not None:
+            c_raw = port_conductance.to(v_local.dtype)
+        else:
+            v_k = v_local.unsqueeze(2)
+            v_j = v_local.unsqueeze(1)
+            dist_sq = torch.sum((v_k - v_j).to(torch.float32).pow(2), dim=-1) / float(max(1, d_e))
+            eye_k = torch.eye(k, dtype=torch.bool, device=v_local.device).unsqueeze(0)
+            c_raw = torch.exp(-0.50 * dist_sq).masked_fill(eye_k, 0.0).to(v_local.dtype)
+
+        deg = torch.sum(c_raw, dim=-1, keepdim=True).clamp_min(1.0)
+        return c_raw / deg
+
     def compute_sheaf_laplacian(
         self,
         z_stalks: torch.Tensor,
@@ -485,21 +553,16 @@ class CellularSheafOperator(nn.Module):
         d_e = self.d_edge
 
         v_local = torch.matmul(w_sheaf, z_stalks.unsqueeze(-1)).squeeze(-1)
+        c_norm = self._compute_normalized_edge_conductance(v_local, port_conductance).unsqueeze(-1)
 
-        v_j = v_local.unsqueeze(2).expand(b, k, k, d_e)
-        v_k = v_local.unsqueeze(1).expand(b, k, k, d_e)
-        diff_jk = v_j - v_k
+        v_k = v_local.unsqueeze(2).expand(b, k, k, d_e)
+        v_j = v_local.unsqueeze(1).expand(b, k, k, d_e)
 
-        if port_conductance is not None:
-            c_mat = port_conductance.unsqueeze(-1)
-            diff_weighted = diff_jk * c_mat
-        else:
-            diff_weighted = diff_jk
+        coboundary_kj = v_k - v_j
+        diff_sum_edges = torch.sum(coboundary_kj * c_norm, dim=2)
 
-        diff_sum_edges = torch.sum(diff_weighted, dim=2)
         w_t = w_sheaf.transpose(-2, -1)
         lz = torch.matmul(w_t, diff_sum_edges.unsqueeze(-1)).squeeze(-1)
-
         return lz
 
     def compute_dirac_advection(
@@ -513,22 +576,16 @@ class CellularSheafOperator(nn.Module):
         d_e = self.d_edge
 
         v_k = torch.matmul(w_sheaf, z_stalks.unsqueeze(-1)).squeeze(-1)
+        c_norm = self._compute_normalized_edge_conductance(v_k, port_conductance).unsqueeze(-1)
 
         r_gen = cast(torch.Tensor, self.canonical_skew_generator).view(1, 1, d_e, d_e).expand(b, k, -1, -1).to(v_k.dtype)
         rv = torch.matmul(r_gen, v_k.unsqueeze(-1)).squeeze(-1)
 
         rv_j = rv.unsqueeze(1).expand(b, k, k, d_e)
+        rv_sum = torch.sum(rv_j * c_norm, dim=2)
 
-        if port_conductance is not None:
-            c_mat = port_conductance.unsqueeze(-1)
-            rv_weighted = rv_j * c_mat
-        else:
-            rv_weighted = rv_j
-
-        rv_sum = torch.sum(rv_weighted, dim=2)
         w_t = w_sheaf.transpose(-2, -1)
         az = torch.matmul(w_t, rv_sum.unsqueeze(-1)).squeeze(-1)
-
         return az
 
     def compute_dirichlet_energy(
@@ -540,24 +597,27 @@ class CellularSheafOperator(nn.Module):
         b, k, _ = z_stalks.shape
         d_e = self.d_edge
 
-        v_local = torch.matmul(w_sheaf, z_stalks.unsqueeze(-1)).squeeze(-1)
+        v_local = torch.matmul(w_sheaf, z_stalks.unsqueeze(-1)).squeeze(-1).to(torch.float32)
 
-        v_j = v_local.unsqueeze(2).expand(b, k, k, d_e)
-        v_k = v_local.unsqueeze(1).expand(b, k, k, d_e)
-        diff_sq = torch.sum((v_j - v_k).pow(2), dim=-1)
+        v_k = v_local.unsqueeze(2).expand(b, k, k, d_e)
+        v_j = v_local.unsqueeze(1).expand(b, k, k, d_e)
+        diff_sq = torch.sum((v_k - v_j).pow(2), dim=-1) / float(max(1, d_e))
 
         if port_conductance is not None:
-            c_mat = port_conductance
-            weighted_diff = diff_sq * c_mat
-            active_edges = torch.clamp_min(torch.sum(c_mat, dim=(-2, -1)), 1.0)
+            c_mat = port_conductance.to(torch.float32)
         else:
-            weighted_diff = diff_sq
-            active_edges = torch.full((b,), float(max(1, k * k)), dtype=torch.float32, device=z_stalks.device)
+            eye_k = torch.eye(k, dtype=torch.bool, device=z_stalks.device).unsqueeze(0)
+            c_mat = torch.ones((b, k, k), dtype=torch.float32, device=z_stalks.device).masked_fill(eye_k, 0.0) / float(
+                max(1, k - 1)
+            )
+
+        weighted_diff = diff_sq * c_mat
+        active_edges = torch.clamp_min(torch.sum(c_mat, dim=(-2, -1)), 1.0)
 
         abs_energy = 0.50 * torch.sum(weighted_diff, dim=(-2, -1))
         norm_energy = abs_energy / active_edges
 
-        return abs_energy, norm_energy
+        return abs_energy.to(z_stalks.dtype), norm_energy.to(z_stalks.dtype)
 
     def solve_schur_resolvent(
         self,
@@ -593,27 +653,42 @@ class CellularSheafOperator(nn.Module):
         a_ub_zb = az[:, k_b:]
 
         with torch.amp.autocast(device_type=dev_type, enabled=False):
-            w_u_flat = w_u.to(torch.float32).reshape(b * k_u, self.d_edge, d)
-            wt_w_flat = torch.matmul(w_u_flat.transpose(-2, -1), w_u_flat)
-            l_uu_blocks = wt_w_flat.view(b, k_u, d, d)
-
-            eye = torch.eye(d, dtype=torch.float32, device=device).view(1, 1, d, d)
-            h_matrix = l_uu_blocks + (gamma_val * eye)
+            n_flat = b * k_u
+            de = self.d_edge
+            gamma_safe = max(float(gamma_val), 1e-3)
+            w_u_flat = w_u.to(torch.float32).reshape(n_flat, de, d)
 
             rhs = (
-                gamma_val * u_expanded.to(torch.float32)
-                + self.alpha_advection * a_ub_zb.to(torch.float32)
+                gamma_safe * u_expanded.to(torch.float32)
+                + (0.20 * self.alpha_advection * a_ub_zb.to(torch.float32))
                 - l_ub_zb.to(torch.float32)
             )
+            rhs_flat = rhs.reshape(n_flat, d, 1)
 
-            h_mat_flat = h_matrix.view(b * k_u, d, d)
-            rhs_flat = rhs.view(b * k_u, d, 1)
+            """
+            Woodbury-Sherman-Morrison + 8-Step Newton-Schulz SPD Solver in pure cuBLAS GEMM:
+              (W_u^T W_u + gamma I_d)^(-1) rhs = (1 / gamma) * [rhs - W_u^T (gamma I_de + W_u W_u^T)^(-1) W_u rhs]
+            Completely eliminates MAGMA sgetrf_batched / cuSOLVER cholesky calls on CUDA 13.0!
+            """
+            gram_raw = torch.bmm(w_u_flat, w_u_flat.transpose(1, 2))
+            gram_sym = 0.50 * (gram_raw + gram_raw.transpose(1, 2))
+            eye_de = torch.eye(de, dtype=torch.float32, device=device).unsqueeze(0).expand(n_flat, de, de)
+            gram_spd = gram_sym + (gamma_safe * eye_de)
 
-            try:
-                cholesky_l = torch.linalg.cholesky(h_mat_flat)
-                z_u_flat = torch.cholesky_solve(rhs_flat, cholesky_l).squeeze(-1)
-            except Exception:
-                z_u_flat = torch.linalg.solve(h_mat_flat, rhs_flat).squeeze(-1)
+            trace_spd = (
+                torch.diagonal(gram_spd, dim1=-2, dim2=-1)
+                .sum(dim=-1, keepdim=True)
+                .unsqueeze(-1)
+                .clamp_min(1e-4)
+            )
+            gram_inv = eye_de / trace_spd
+            two_eye = 2.0 * eye_de
+            for _ in range(8):
+                gram_inv = torch.bmm(gram_inv, two_eye - torch.bmm(gram_spd, gram_inv))
+
+            wu_rhs = torch.bmm(w_u_flat, rhs_flat)
+            corr_flat = torch.bmm(w_u_flat.transpose(1, 2), torch.bmm(gram_inv, wu_rhs))
+            z_u_flat = ((rhs_flat - corr_flat) / gamma_safe).squeeze(-1)
 
         z_unknown = z_u_flat.view(b, k_u, d).to(dtype)
         return z_unknown
@@ -629,16 +704,17 @@ class CellularSheafOperator(nn.Module):
         lz = self.compute_sheaf_laplacian(z_stalks, w_sheaf, port_conductance)
         az = self.compute_dirac_advection(z_stalks, w_sheaf, c_relational, port_conductance)
 
-        z_evolved = z_stalks - (self.beta_diffusion * lz) + (self.alpha_advection * az)
-        _, norm_energy = self.compute_dirichlet_energy(z_stalks, w_sheaf, port_conductance)
+        z_raw = z_stalks - (self.beta_diffusion * lz) + (0.20 * self.alpha_advection * az)
+        z_evolved = self.norm_stalk(z_raw)
+        _, norm_energy = self.compute_dirichlet_energy(z_evolved, w_sheaf, port_conductance)
 
         return z_evolved, w_sheaf, norm_energy
 
 
 class SpatialMooreSheafDiffusion(nn.Module):
     """
-    SOTA Zero-Loop Vectorized 12-Ray Dilated 2D Spatial Cellular Sheaf Diffusion,
-    Lie-Dirac Advection, and Isochoric NA3D-Finsler-Lie v2.0 Engine.
+    Anisotropic Edge-Stopping Perona-Malik-Randers 12-Ray Cellular Sheaf Diffusion,
+    Heterogeneous Local Frame Restriction, and Isochoric NA3D-Finsler-Lie v3.0 Engine.
     """
 
     DIRECTIONS: Tuple[Tuple[int, int, float], ...] = (
@@ -650,18 +726,18 @@ class SpatialMooreSheafDiffusion(nn.Module):
         (-1, 1, 0.70710678),
         (1, -1, 0.70710678),
         (1, 1, 0.70710678),
-        (-3, 0, 0.50),
-        (3, 0, 0.50),
-        (0, -3, 0.50),
-        (0, 3, 0.50),
+        (-3, 0, 0.25),
+        (3, 0, 0.25),
+        (0, -3, 0.25),
+        (0, 3, 0.25),
     )
 
     def __init__(
         self,
         d_node: int = DEFAULT_D_NODE,
         d_edge: int = DEFAULT_D_EDGE,
-        diffusion_gain: float = 0.20,
-        advection_gain: float = 0.15,
+        diffusion_gain: float = 0.15,
+        advection_gain: float = 0.10,
         min_conductance: float = MIN_CONDUCTANCE_FLOOR,
         stiefel_iterations: int = 3,
         eps: float = DEFAULT_STIEFEL_EPS,
@@ -677,15 +753,17 @@ class SpatialMooreSheafDiffusion(nn.Module):
         self.num_stencil_rays = len(self.DIRECTIONS)
 
         self.w_raw = nn.Parameter(torch.randn(self.d_edge, self.d_node, dtype=torch.float32) / math.sqrt(self.d_node))
+        self.local_stalk_modulator = nn.Linear(self.d_node, self.d_edge, bias=False)
 
         self.conductance_router = nn.Linear(self.d_node, self.num_stencil_rays, bias=True)
         self.permeability_valve = nn.Linear(self.d_node, 1, bias=True)
+        self.edge_stop_scale = nn.Parameter(torch.tensor(0.45, dtype=torch.float32))
 
         self.advection_velocity_proj = nn.Linear(self.d_node, self.num_stencil_rays, bias=True)
         self.skew_rotor_param = nn.Parameter(torch.randn(self.d_edge, self.d_edge, dtype=torch.float32) * 0.05)
 
         self.na3d_engine = NA3DFinslerLieEngine(d_node=self.d_node, eps=eps)
-        self.na3d_gate = nn.Parameter(torch.tensor(0.35, dtype=torch.float32))
+        self.na3d_gate = nn.Parameter(torch.tensor(0.25, dtype=torch.float32))
 
         metric_w_tensor = torch.tensor(
             [m / float(self.num_stencil_rays) for _, _, m in self.DIRECTIONS],
@@ -698,10 +776,11 @@ class SpatialMooreSheafDiffusion(nn.Module):
         self._reset_parameters()
 
     def _reset_parameters(self) -> None:
+        nn.init.zeros_(self.local_stalk_modulator.weight)
         nn.init.xavier_uniform_(self.conductance_router.weight, gain=0.2)
         nn.init.zeros_(self.conductance_router.bias)
         nn.init.xavier_uniform_(self.permeability_valve.weight, gain=0.2)
-        nn.init.constant_(self.permeability_valve.bias, 0.50)
+        nn.init.constant_(self.permeability_valve.bias, 0.25)
         nn.init.xavier_uniform_(self.advection_velocity_proj.weight, gain=0.1)
         nn.init.zeros_(self.advection_velocity_proj.bias)
 
@@ -735,7 +814,8 @@ class SpatialMooreSheafDiffusion(nn.Module):
             eps=self.eps,
         ).squeeze(0).to(h_field.dtype)
 
-        v_edge = F.linear(h_active, w_ortho) * mask_f32
+        local_frame_gain = 1.0 + 0.20 * torch.tanh(self.local_stalk_modulator(h_active))
+        v_edge = (F.linear(h_active, w_ortho) * local_frame_gain) * mask_f32
         r_rotor = self._get_cayley_skew_rotor(h_field.dtype)
         rv_edge = F.linear(v_edge, r_rotor) * mask_f32
 
@@ -761,7 +841,6 @@ class SpatialMooreSheafDiffusion(nn.Module):
         pack_all = torch.cat([v_edge, rv_edge, mask_f32], dim=-1)
         pad_all = F.pad(pack_all.permute(0, 3, 1, 2), (3, 3, 3, 3), mode="constant", value=0.0).permute(0, 2, 3, 1)
 
-        """Vectorized 12-Ray Stencil Stack (Eliminates sequential per-ray accumulation loop)"""
         ray_slices = [
             pad_all[:, (3 - dy) : (3 - dy + H), (3 - dx) : (3 - dx + W), :]
             for dy, dx, _ in self.DIRECTIONS
@@ -775,19 +854,28 @@ class SpatialMooreSheafDiffusion(nn.Module):
         valid_edges = mask_f32.unsqueeze(3) * mask_nb
         metric_w = cast(torch.Tensor, self.metric_ray_weights).to(h_field.dtype)
 
-        c_dirs = conductances.unsqueeze(-1) * metric_w * valid_edges
-        w_adv_dirs = adv_weights * metric_w * valid_edges
-
+        """
+        Anisotropic Perona-Malik-Randers Edge-Stopping Barrier:
+        Prevents foreground contours from bleeding into background across sharp edges!
+        """
         diff_edges = (v_edge.unsqueeze(3) - v_nb) * valid_edges
+        diff_sq_f32 = torch.sum(diff_edges.to(torch.float32).pow(2), dim=-1, keepdim=True)
+        norm_diff_sq = diff_sq_f32 / float(max(1, d_e))
+
+        sigma_edge_sq = F.softplus(self.edge_stop_scale.to(torch.float32)).pow(2) + 0.05
+        asym_drift = F.relu(torch.sum(v_edge.unsqueeze(3).to(torch.float32) * diff_edges.to(torch.float32), dim=-1, keepdim=True)) / float(max(1, d_e))
+        edge_barrier = torch.exp(-((norm_diff_sq + 0.35 * asym_drift) / sigma_edge_sq)).to(h_field.dtype)
+
+        c_dirs = conductances.unsqueeze(-1) * metric_w * edge_barrier * valid_edges
+        w_adv_dirs = adv_weights * metric_w * edge_barrier * valid_edges
 
         laplacian_edge_accum = torch.sum(c_dirs * diff_edges, dim=3)
         advection_edge_accum = torch.sum(w_adv_dirs * rv_nb, dim=3)
 
-        diff_sq_f32 = torch.sum(diff_edges.to(torch.float32).pow(2), dim=-1, keepdim=True)
         energy_accum = torch.sum(c_dirs.detach().to(torch.float32) * diff_sq_f32, dim=3)
 
-        delta_f_h = F.linear(laplacian_edge_accum, w_ortho.t())
-        adv_f_h = F.linear(advection_edge_accum, w_ortho.t())
+        delta_f_h = F.linear(laplacian_edge_accum * local_frame_gain, w_ortho.t())
+        adv_f_h = F.linear(advection_edge_accum * local_frame_gain, w_ortho.t())
 
         h_updated = self.norm(
             h_active - (self.diffusion_gain * delta_f_h) + (self.advection_gain * adv_f_h)
@@ -820,7 +908,11 @@ def verify_stiefel_sheaf_diagnostics() -> bool:
 
     h_iso = NA3DFinslerLieEngine.enforce_isochoric_frame_projection(h_zero, h_zero, mask_partial)
     obs_zero = NA3DFinslerLieEngine.extract_na3d_global_invariants(h_iso, mask_partial)
-    loss_zero = torch.sum(h_iso.pow(2)) + torch.sum(obs_zero.pow(2))
+    casimir_obs = NA3DFinslerLieEngine.extract_casimir_chiral_observables(h_zero, h_iso, mask_partial)
+    if casimir_obs.shape != (2, 6, 6, 4 * (d_v // 16)):
+        return False
+
+    loss_zero = torch.sum(h_iso.pow(2)) + torch.sum(obs_zero.pow(2)) + torch.sum(casimir_obs.pow(2))
     loss_zero.backward()
 
     if h_zero.grad is None or torch.isnan(h_zero.grad).any() or torch.isinf(h_zero.grad).any():
@@ -830,15 +922,22 @@ def verify_stiefel_sheaf_diagnostics() -> bool:
         d_node=d_v,
         d_edge=d_e,
         max_slots=4,
-        alpha_advection=0.85,
-        beta_diffusion=0.15,
+        alpha_advection=0.0,
+        beta_diffusion=0.25,
     )
 
     z_stalks = torch.randn(2, 4, d_v, requires_grad=True)
     c_rel = torch.randn(2, d_v, requires_grad=True)
-    conductance = torch.eye(4).unsqueeze(0).expand(2, -1, -1)
 
-    z_ev, _, e_dir = sheaf_op(z_stalks, c_rel, conductance)
+    w_init = sheaf_op.generate_sheaf_bundle(z_stalks)
+    _, e_before = sheaf_op.compute_dirichlet_energy(z_stalks, w_init)
+    lz = sheaf_op.compute_sheaf_laplacian(z_stalks, w_init)
+    z_step = z_stalks - 0.25 * lz
+    _, e_after = sheaf_op.compute_dirichlet_energy(z_step, w_init)
+    if float(e_after.mean().item()) >= float(e_before.mean().item()):
+        return False
+
+    z_ev, _, e_dir = sheaf_op(z_stalks, c_rel)
     z_solved = sheaf_op.solve_schur_resolvent(
         z_boundary=z_stalks[:, :3],
         u_mol_context=c_rel,
@@ -847,7 +946,7 @@ def verify_stiefel_sheaf_diagnostics() -> bool:
         num_unknown_slots=1,
     )
 
-    spatial_sheaf = SpatialMooreSheafDiffusion(d_node=d_v, d_edge=d_e, diffusion_gain=0.20)
+    spatial_sheaf = SpatialMooreSheafDiffusion(d_node=d_v, d_edge=d_e, diffusion_gain=0.15)
     h_canvas = torch.randn(2, 6, 6, d_v, requires_grad=True)
     mask_canvas = torch.ones(2, 6, 6, dtype=torch.bool)
     mask_canvas[:, :, 3:] = False

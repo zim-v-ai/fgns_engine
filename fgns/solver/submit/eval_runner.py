@@ -115,12 +115,35 @@ class EvaluationPipelineRunner:
         )
         warmup_start = time.time()
         self.model.train()
+
+        frozen_prefixes = (
+            "projector.palette",
+            "projector.lie_resonator",
+            "projector.spectral_topology",
+            "chordal_coord_proj",
+            "query_canvas_initializer",
+        )
+        for name, param in self.model.named_parameters():
+            if any(name.startswith(pref) for pref in frozen_prefixes):
+                param.requires_grad = False
+            else:
+                param.requires_grad = True
+
+        trainable_params = [p for p in self.model.parameters() if p.requires_grad]
         loss_engine = SchattenNuclearMDLObjective(self.config).to(self.device)
 
         use_fused = torch.cuda.is_available() and self.device.type == "cuda"
-        opt = torch.optim.AdamW(self.model.parameters(), lr=1.5e-4, weight_decay=1e-4, fused=use_fused)
+        opt = torch.optim.AdamW(trainable_params, lr=5.0e-5, weight_decay=1e-4, fused=use_fused)
         amp_device = "cuda" if self.device.type == "cuda" else "cpu"
-        amp_enabled = self.config.hardware.enable_bf16_amp and (self.device.type == "cuda")
+        amp_enabled = (
+            self.config.hardware.enable_bf16_amp
+            and (self.device.type == "cuda")
+            and torch.cuda.is_available()
+            and (torch.cuda.get_device_capability(self.device)[0] >= 8)
+        )
+
+        ema_state = {k: v.detach().clone() for k, v in self.model.state_dict().items()}
+        ema_decay = 0.995
 
         task_list = [t for t in tasks if len(t.train) >= 2]
         for ep in range(1, warmup_epochs + 1):
@@ -139,23 +162,42 @@ class EvaluationPipelineRunner:
                 )
                 opt.zero_grad(set_to_none=True)
                 with torch.amp.autocast(device_type=amp_device, dtype=torch.bfloat16, enabled=amp_enabled):
-                    out = self.model(batch, tau=0.25)
+                    out = self.model(batch, tau=1.0, current_step_ratio=0.0)
                     proto_l = self.model.projector.palette.compute_orthogonality_loss()
                     telem = loss_engine(out, batch, prototype_ortho_loss=proto_l)
-                telem.total_loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-                opt.step()
-                ep_loss += float(telem.total_loss.detach().item())
-                steps += 1
+                if torch.isfinite(telem.total_loss):
+                    telem.total_loss.backward()
+                    for p in trainable_params:
+                        if p.grad is not None:
+                            torch.nan_to_num_(p.grad, nan=0.0, posinf=1.0, neginf=-1.0)
+                    torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=1.0)
+                    opt.step()
+                    with torch.no_grad():
+                        for k, v in self.model.state_dict().items():
+                            if torch.is_floating_point(v):
+                                if not torch.isfinite(v).all():
+                                    v.copy_(ema_state[k])
+                                else:
+                                    ema_state[k].mul_(ema_decay).add_(v, alpha=1.0 - ema_decay)
+                    ep_loss += float(telem.total_loss.detach().item())
+                    steps += 1
 
             avg_l = ep_loss / float(max(1, steps))
             self.logger.write(
                 f"   -> [Transductive LOO Warmup Epoch {ep}/{warmup_epochs}] Mean Loss: {avg_l:.4f} ({time.time() - warmup_start:.1f}s)\n"
             )
 
+        with torch.no_grad():
+            for k, v in self.model.state_dict().items():
+                if k in ema_state and torch.is_floating_point(v):
+                    v.copy_(ema_state[k])
+
         self.model.eval()
         if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
 
     def calculate_allocated_budget(self) -> int:
         base_budget = getattr(self.args, "time", DEFAULT_TASK_TIME_BUDGET)
