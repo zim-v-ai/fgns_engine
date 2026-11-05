@@ -24,7 +24,10 @@ import torch.nn.functional as F
 
 from fgns.config import FGNSConfig
 from fgns.kernels.log_sinkhorn import LogDomainSinkhornBirkhoffProjector
-from fgns.kernels.spectral_laplacian import PoissonDirichletCavitySolver
+from fgns.kernels.spectral_laplacian import (
+    DifferentiableSpectralGreenOperator,
+    PoissonDirichletCavitySolver,
+)
 from fgns.models.cauchy_field_decoder.field_decoder import (
     DualStateCauchyRecurrentDecoder,
 )
@@ -118,6 +121,7 @@ class FinslerGaugeSheafNetwork(nn.Module):
         self.na3d_rotor_proj = nn.Linear(self.d_model, self.num_na3d_cells * 3, bias=False)
         self.chordal_coord_proj = nn.Linear(6, self.d_model, bias=False)
         self.chordal_coord_gate = nn.Parameter(torch.tensor(0.35, dtype=torch.float32))
+        self.spectral_green_operator = DifferentiableSpectralGreenOperator()
 
         self.window_salience_proj = nn.Linear(self.d_model, 1, bias=True)
 
@@ -598,71 +602,12 @@ class FinslerGaugeSheafNetwork(nn.Module):
 
         return alpha_q, alpha_s_loo
 
-    @staticmethod
     def _compute_continuous_chordal_basis(
+        self,
         grid: torch.Tensor,
         mask: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        orig_batch = grid.shape[:-2]
-        H, W = grid.shape[-2], grid.shape[-1]
-        device = grid.device
-
-        g_flat = grid.reshape(-1, H, W)
-        m_flat = mask.reshape(-1, H, W)
-        m_f32 = m_flat.float().unsqueeze(-1)
-
-        (
-            m_cav,
-            h_span,
-            w_span,
-            _,
-            dipole_yx,
-            seed_f,
-        ) = PoissonDirichletCavitySolver.compute_finsler_chordal_bundle(
-            g_flat, m_flat, num_iterations=10
-        )
-        _, is_wall, is_seed = PoissonDirichletCavitySolver._extract_wall_and_seed_masks(g_flat, m_flat)
-
-        is_zero_vacuum = (g_flat == 0).to(torch.float32).unsqueeze(-1)
-        m_vac_cav = m_cav * is_zero_vacuum
-
-        min_span = torch.minimum(h_span, w_span).clamp(1.0, 15.0)
-        calibers = torch.tensor(CAVITY_CALIBERS_3, dtype=torch.float32, device=device).view(1, 1, 1, NUM_CHORDAL_MODES)
-        gauss_logits = -0.50 * ((min_span - calibers) / 0.55).pow(2)
-        cheb_norm = F.softmax(gauss_logits, dim=-1)
-
-        cavity_basis_3 = (m_vac_cav * cheb_norm) * m_f32
-        open_weight = (1.0 - m_vac_cav) * m_f32
-
-        chi_plus = PoissonDirichletCavitySolver.compute_morphological_plus_cross_mask(g_flat, m_flat).unsqueeze(-1)
-        one_hot_10 = F.one_hot(g_flat.clamp(0, 9), num_classes=10).to(torch.float32) * open_weight
-
-        standard_10 = one_hot_10 * (1.0 - chi_plus)
-        plus_cross_10 = one_hot_10 * chi_plus
-
-        basis_23 = torch.cat([standard_10, plus_cross_10, cavity_basis_3], dim=-1)
-
-        cavity_mass_bins = cavity_basis_3.sum(dim=(-3, -2))
-
-        chordal_6d = torch.cat(
-            [
-                m_cav,
-                torch.log(h_span.clamp_min(1.0)) / 3.40,
-                torch.log(w_span.clamp_min(1.0)) / 3.40,
-                dipole_yx,
-                seed_f,
-            ],
-            dim=-1,
-        ) * m_f32
-
-        skeleton_anchor = torch.clamp(is_wall + (is_seed * (seed_f > 0.5).float()), 0.0, 1.0)
-
-        return (
-            basis_23.view(*orig_batch, H, W, NUM_TOPO_CHANNELS),
-            cavity_mass_bins.view(*orig_batch, NUM_CHORDAL_MODES),
-            chordal_6d.view(*orig_batch, H, W, 6),
-            skeleton_anchor.squeeze(-1).view(*orig_batch, H, W),
-        )
+        return self.spectral_green_operator.compute_basis(grid, mask)
 
     def _compute_continuous_chordal_rkhs_transport(
         self,
@@ -673,70 +618,14 @@ class FinslerGaugeSheafNetwork(nn.Module):
         alpha_q: torch.Tensor,
         alpha_s_loo: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        B, K, H, W, _ = s_basis_23.shape
-        device = s_basis_23.device
-        dev_type = "cuda" if s_basis_23.is_cuda else "cpu"
-
-        with torch.amp.autocast(device_type=dev_type, enabled=False):
-            joint_m = (s_in_masks & s_out_masks).to(torch.float32).unsqueeze(-1)
-            in_23 = (s_basis_23.to(torch.float32) * joint_m).view(B * K, H * W, NUM_TOPO_CHANNELS)
-            out_10 = (F.one_hot(s_outputs.clamp(0, 9), num_classes=10).to(torch.float32) * joint_m).view(
-                B * K, H * W, 10
-            )
-
-            co_occur_all = torch.bmm(in_23.transpose(1, 2), out_10).view(B, K, NUM_TOPO_CHANNELS, 10)
-
-            v_mask = (s_in_masks.any(dim=-1).any(dim=-1) & s_out_masks.any(dim=-1).any(dim=-1)).to(torch.float32)
-            w_unif = (v_mask / v_mask.sum(dim=-1, keepdim=True).clamp_min(1.0)).view(B, K, 1, 1)
-            w_res = alpha_q.to(torch.float32).view(B, K, 1, 1)
-
-            co_q_std = torch.sum(co_occur_all[:, :, :10, :] * w_res, dim=1)
-            co_q_plus = torch.sum(co_occur_all[:, :, 10:20, :] * w_unif, dim=1)
-            co_q_cav = torch.sum(co_occur_all[:, :, 20:, :] * w_unif, dim=1)
-
-            eye_10 = torch.eye(10, dtype=torch.float32, device=device).unsqueeze(0).expand(B, 10, 10)
-            row_sum_std = co_q_std.sum(dim=-1, keepdim=True)
-            t_q_std = torch.where(row_sum_std > 0.25, co_q_std / row_sum_std.clamp_min(0.25), eye_10)
-
-            row_sum_plus = co_q_plus.sum(dim=-1, keepdim=True)
-            t_q_plus = torch.where(row_sum_plus > 0.50, co_q_plus / row_sum_plus.clamp_min(0.50), t_q_std)
-
-            cav_default = torch.zeros((B, 3, 10), dtype=torch.float32, device=device)
-            cav_default[:, :, 0] = 1.0
-            row_sum_cav = co_q_cav.sum(dim=-1, keepdim=True)
-            t_q_cav = torch.where(row_sum_cav > 0.25, co_q_cav / row_sum_cav.clamp_min(0.25), cav_default)
-
-            t_rkhs_q = torch.cat([t_q_std, t_q_plus, t_q_cav], dim=1)
-
-            eye_k = torch.eye(K, dtype=torch.float32, device=device).unsqueeze(0)
-            not_self_w = (1.0 - eye_k) * v_mask.unsqueeze(1)
-            not_self_sum = not_self_w.sum(dim=-1, keepdim=True)
-            w_loo_unif = torch.where(
-                not_self_sum > 1e-6,
-                not_self_w / not_self_sum.clamp_min(1e-6),
-                v_mask.unsqueeze(1) / v_mask.sum(dim=-1, keepdim=True).unsqueeze(-1).clamp_min(1.0),
-            ).to(torch.float32)
-
-            alpha_s_loo_f32 = alpha_s_loo.to(torch.float32)
-            co_s_std = torch.einsum("bkj,bjrc->bkrc", alpha_s_loo_f32, co_occur_all[:, :, :10, :]).reshape(B * K, 10, 10)
-            co_s_plus = torch.einsum("bkj,bjrc->bkrc", w_loo_unif, co_occur_all[:, :, 10:20, :]).reshape(B * K, 10, 10)
-            co_s_cav = torch.einsum("bkj,bjrc->bkrc", w_loo_unif, co_occur_all[:, :, 20:, :]).reshape(B * K, 3, 10)
-
-            eye_bk = torch.eye(10, dtype=torch.float32, device=device).unsqueeze(0).expand(B * K, 10, 10)
-            r_s_std = co_s_std.sum(dim=-1, keepdim=True)
-            t_s_std = torch.where(r_s_std > 0.25, co_s_std / r_s_std.clamp_min(0.25), eye_bk)
-
-            r_s_plus = co_s_plus.sum(dim=-1, keepdim=True)
-            t_s_plus = torch.where(r_s_plus > 0.50, co_s_plus / r_s_plus.clamp_min(0.50), t_s_std)
-
-            cav_def_bk = torch.zeros((B * K, 3, 10), dtype=torch.float32, device=device)
-            cav_def_bk[:, :, 0] = 1.0
-            r_s_cav = co_s_cav.sum(dim=-1, keepdim=True)
-            t_s_cav = torch.where(r_s_cav > 0.25, co_s_cav / r_s_cav.clamp_min(0.25), cav_def_bk)
-
-            t_rkhs_s_loo = torch.cat([t_s_std, t_s_plus, t_s_cav], dim=1)
-
-        return t_rkhs_q, t_rkhs_s_loo
+        return self.spectral_green_operator.solve_rkhs_transport(
+            s_basis_23=s_basis_23,
+            s_in_masks=s_in_masks,
+            s_outputs=s_outputs,
+            s_out_masks=s_out_masks,
+            alpha_q=alpha_q,
+            alpha_s_loo=alpha_s_loo,
+        )
 
     @staticmethod
     def _compute_structural_anchor_preservation(
@@ -2305,6 +2194,8 @@ def verify_fgns_network_diagnostics() -> bool:
     if model.query_canvas_initializer.weight.grad is None:
         return False
     if model.size_oracle.head_terminal_h.weight.grad is None:
+        return False
+    if model.spectral_green_operator.log_lambda_ridge.grad is None:
         return False
 
     return True

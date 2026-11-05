@@ -22,5 +22,6 @@
   ],
   "typeCheckingMode": "basic",
   "reportPrivateImportUsage": "none",
-  "reportMissingTypeStubs": false
+  "reportMissingTypeStubs": false,
+  "reportMissingModuleSource": "none"
 }

@@ -425,7 +425,7 @@ class FGNSConfig:
         d_model = self.octowave.d_model
         dtype_bytes = 2 if self.hardware.enable_bf16_amp else 4
 
-        weights_mb = 5.8 * 1024 * 1024 * dtype_bytes / (1024 * 1024)
+        weights_mb = 6.574171 * 1000 * 1000 * dtype_bytes / (1024 * 1024)
         tokens_count = batch_size * (1 + k_static) * spatial_size
         octowave_activation_mb = tokens_count * d_model * dtype_bytes / (1024 * 1024)
         accro_activation_mb = tokens_count * d_model * self.reasoning.reasoning_steps * dtype_bytes / (1024 * 1024)

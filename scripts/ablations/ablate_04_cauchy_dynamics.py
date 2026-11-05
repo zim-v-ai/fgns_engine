@@ -79,7 +79,7 @@ def run_cauchy_dynamics_ablation(tasks: List[ARCTask], device: torch.device) -> 
                 ) -> AccroFlowState:
                     m_f32 = mask.float().unsqueeze(-1)
                     dt_val = time_delta if isinstance(time_delta, torch.Tensor) else float(time_delta)
-                    c_euler = (c_initial + (1.75 * dt_val * driving_force)) * m_f32
+                    c_euler = (c_initial + (2.35 * dt_val * driving_force)) * m_f32
                     v_raw = driving_force * m_f32
                     ones_k = torch.ones_like(c_initial)
                     e_kin = 0.50 * torch.mean(v_raw.to(torch.float32).pow(2), dim=(-3, -2, -1))
@@ -102,8 +102,8 @@ def run_cauchy_dynamics_ablation(tasks: List[ARCTask], device: torch.device) -> 
                 ) -> torch.Tensor:
                     return cand_logits_10
 
-                model.accro_decoder.accro_flow.forward = euler_step_forward  # type: ignore[method-assign]
-                model.accro_decoder._compute_transductive_support_residual_correction = no_lyapunov_corr  # type: ignore[method-assign]
+                setattr(model.accro_decoder.accro_flow, "forward", euler_step_forward)
+                setattr(model.accro_decoder, "_compute_transductive_support_residual_correction", no_lyapunov_corr)
 
             elif cond == "recurrent_gru":
                 model.accro_decoder.reasoning_steps = 4
@@ -122,9 +122,9 @@ def run_cauchy_dynamics_ablation(tasks: List[ARCTask], device: torch.device) -> 
                     pair_valid_mask: Optional[torch.Tensor],
                     step_idx: int,
                 ) -> torch.Tensor:
-                    return 0.50 * (prev_logits_10 + cand_logits_10)
+                    return 0.65 * cand_logits_10 + 0.35 * prev_logits_10
 
-                model.accro_decoder._compute_transductive_support_residual_correction = gru_no_support_corr  # type: ignore[method-assign]
+                setattr(model.accro_decoder, "_compute_transductive_support_residual_correction", gru_no_support_corr)
 
             else:
                 model.accro_decoder.reasoning_steps = 4
@@ -145,8 +145,8 @@ def run_cauchy_dynamics_ablation(tasks: List[ARCTask], device: torch.device) -> 
 
             finally:
                 model.accro_decoder.reasoning_steps = 4
-                model.accro_decoder.accro_flow.forward = orig_flow_fn  # type: ignore[method-assign]
-                model.accro_decoder._compute_transductive_support_residual_correction = orig_corr_fn  # type: ignore[method-assign]
+                setattr(model.accro_decoder.accro_flow, "forward", orig_flow_fn)
+                setattr(model.accro_decoder, "_compute_transductive_support_residual_correction", orig_corr_fn)
 
         if cond == "cauchy_resolvent":
             verdict_str = "OPTIMAL SOTA: Dual-State Cauchy resolvent with support-residual Lyapunov correction achieves monotonic descent."

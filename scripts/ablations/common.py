@@ -233,6 +233,7 @@ def synthesize_compact_task_visual_samples(
         )
         t_params = [
             model.pttsa_so3_omega,
+            *list(model.spectral_green_operator.parameters()),
             *list(model.lie_extractor.parameters()),
             *list(model.na3d_rotor_proj.parameters()),
             *list(model.pullback_router.parameters()),
@@ -243,7 +244,7 @@ def synthesize_compact_task_visual_samples(
             loss_engine=loss_engine,
             task=task,
             device=device,
-            num_steps=3,
+            num_steps=8,
             lr=2.5e-4,
             use_spectral_mdl=True,
             use_d4_s9_augmentation=True,
@@ -623,7 +624,7 @@ def run_honest_loo_support_adaptation(
     loss_engine: SchattenNuclearMDLObjective,
     task: ARCTask,
     device: torch.device,
-    num_steps: int = 4,
+    num_steps: int = 8,
     lr: float = 2e-4,
     use_spectral_mdl: bool = True,
     frob_l2_weight: float = 0.0,
@@ -651,10 +652,13 @@ def run_honest_loo_support_adaptation(
             if p.requires_grad and not n.startswith("projector.palette")
         ]
     else:
-        params = trainable_params
+        params = [p for p in trainable_params if p.requires_grad]
 
     if not params:
         return 0, 0.0
+
+    amp_device = "cuda" if device.type == "cuda" else "cpu"
+    amp_enabled = device.type == "cuda"
 
     def _eff_w(mod: nn.Module) -> torch.Tensor:
         if hasattr(mod, "base_linear") and hasattr(mod, "get_delta_weight"):
@@ -742,7 +746,7 @@ def run_honest_loo_support_adaptation(
         final_train_loss = cur_l
         steps_taken += 1
 
-        if cur_l < 0.05 or (step_idx >= 2 and abs(prev_loss - cur_l) < 5e-4):
+        if cur_l < 0.01 or (step_idx >= 6 and abs(prev_loss - cur_l) < 1e-5):
             break
         prev_loss = cur_l
 

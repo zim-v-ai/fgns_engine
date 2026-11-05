@@ -1,0 +1,13 @@
+[package]
+name = "fgns_manifold_engine"
+version = "5.0.0"
+edition = "2021"
+authors = ["Vyacheslav Zimovsky <v.zimovsky.ai@gmail.com>"]
+license = "MIT-0"
+description = "Analytical 3D Ray-Tracing and Signed-Distance Manifold Renderer for FGNS-TRM Spaces (NA3D Finsler-Randers Indicatrix, Orthogonal Fiber Bundle, and Stiefel Cellular Sheaf Lattice)"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"

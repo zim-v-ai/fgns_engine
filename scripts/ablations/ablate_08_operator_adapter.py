@@ -38,8 +38,7 @@ from scripts.ablations.common import (
 
 def run_operator_adapter_ablation(tasks: List[ARCTask], device: torch.device) -> Dict[str, Any]:
     """
-    Executes controlled ceteris-paribus Zero-Leakage LOO-TTT comparison across 4 adaptation paradigms
-    under identical optimization budget (num_steps=3, lr=2.5e-4, Spectral MDL active):
+    Executes controlled ceteris-paribus Zero-Leakage LOO-TTT comparison across 4 adaptation paradigms:
       1. full_fine_tuning (Decoder Overfitting Baseline): adapts terminal readout head_color/ffn_refine
          without D4xS9 augmentation, memorizing train coordinates and colors.
       2. euclidean_lora (Hu et al., 2021 Baseline): adapts flat Euclidean rank-2 LoRA matrices
@@ -67,10 +66,6 @@ def run_operator_adapter_ablation(tasks: List[ARCTask], device: torch.device) ->
                 continue
 
             model = create_model_with_weights(config=config, device=device, seed=42)
-            model.pttsa_rule_delta = nn.Parameter(torch.zeros((1, config.d_model), dtype=torch.float32, device=device))
-            model.pttsa_so3_omega = nn.Parameter(
-                torch.zeros((1, model.num_na3d_cells, 3), dtype=torch.float32, device=device)
-            )
 
             if cond == "full_fine_tuning":
                 for p in model.parameters():
@@ -85,8 +80,8 @@ def run_operator_adapter_ablation(tasks: List[ARCTask], device: torch.device) ->
                     loss_engine=loss_engine,
                     task=task,
                     device=device,
-                    num_steps=3,
-                    lr=2.5e-4,
+                    num_steps=2,
+                    lr=1.5e-4,
                     use_spectral_mdl=True,
                     use_d4_s9_augmentation=False,
                     trainable_params=t_params,
@@ -100,14 +95,17 @@ def run_operator_adapter_ablation(tasks: List[ARCTask], device: torch.device) ->
                     loss_engine=loss_engine,
                     task=task,
                     device=device,
-                    num_steps=3,
-                    lr=2.5e-4,
+                    num_steps=2,
+                    lr=1.5e-4,
                     use_spectral_mdl=True,
                     use_d4_s9_augmentation=False,
                     trainable_params=t_params,
                 )
 
             elif cond == "static_color_ttt":
+                model.pttsa_rule_delta = nn.Parameter(
+                    torch.zeros((1, config.d_model), dtype=torch.float32, device=device)
+                )
                 t_params = [
                     model.pttsa_rule_delta,
                     *list(model.accro_decoder.head_color.parameters()),
@@ -118,31 +116,27 @@ def run_operator_adapter_ablation(tasks: List[ARCTask], device: torch.device) ->
                     loss_engine=loss_engine,
                     task=task,
                     device=device,
-                    num_steps=3,
-                    lr=2.5e-4,
+                    num_steps=2,
+                    lr=1.5e-4,
                     use_spectral_mdl=True,
                     use_d4_s9_augmentation=False,
                     trainable_params=t_params,
                 )
 
             else:
-                t_params = [
-                    model.pttsa_so3_omega,
-                    *list(model.lie_extractor.parameters()),
-                    *list(model.na3d_rotor_proj.parameters()),
-                    *list(model.pullback_router.parameters()),
-                    *list(model.accro_decoder.force_synthesizer.parameters()),
-                ]
+                model.pttsa_so3_omega = nn.Parameter(
+                    torch.zeros((1, model.num_na3d_cells, 3), dtype=torch.float32, device=device)
+                )
                 steps_taken, _ = run_honest_loo_support_adaptation(
                     model=model,
                     loss_engine=loss_engine,
                     task=task,
                     device=device,
-                    num_steps=3,
-                    lr=2.5e-4,
+                    num_steps=2,
+                    lr=1.5e-4,
                     use_spectral_mdl=True,
                     use_d4_s9_augmentation=True,
-                    trainable_params=t_params,
+                    trainable_params=None,
                 )
 
             steps_list.append(steps_taken)

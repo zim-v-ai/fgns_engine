@@ -23,9 +23,12 @@ from fgns.kernels.log_sinkhorn import (
     log_sinkhorn_iterations,
 )
 from fgns.kernels.spectral_laplacian import (
+    DifferentiableSpectralGreenOperator,
     PoissonDirichletCavitySolver,
     SpectralGraphTopology,
+    SpectralGreenWoodburyFunction,
     StencilGraphLaplacianOps,
+    apply_spectral_green_woodbury,
     verify_spectral_laplacian_diagnostics,
 )
 
@@ -42,8 +45,11 @@ __all__ = [
     "verify_cuda_fgns_ops_diagnostics",
     "LogDomainSinkhornBirkhoffProjector",
     "log_sinkhorn_iterations",
+    "DifferentiableSpectralGreenOperator",
     "PoissonDirichletCavitySolver",
     "SpectralGraphTopology",
+    "SpectralGreenWoodburyFunction",
     "StencilGraphLaplacianOps",
+    "apply_spectral_green_woodbury",
     "verify_spectral_laplacian_diagnostics",
 ]

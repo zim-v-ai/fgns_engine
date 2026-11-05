@@ -1,0 +1,42 @@
+% FGNS-TRM v4.4.0 Publication Ablation Summary Table
+\begin{table*}[t]
+\centering
+\small
+\caption{Controlled Architectural Ablations of FGNS-TRM v4.4.0 vs. Literature Analogues on Blind ARC-AGI-2 Evaluation Tasks.}
+\label{tab:fgns_ablations}
+\begin{tabular}{llccccc}
+\toprule
+\textbf{Subsystem} & \textbf{Condition / Analogue} & \textbf{Test Loss $\downarrow$} & \textbf{Pixel Acc (\%) $\uparrow$} & \textbf{Exact (\%) $\uparrow$} & \textbf{Size Acc (\%) $\uparrow$} & \textbf{Primary Domain Invariant} \\
+\midrule
+01. NA3D Frame & \texttt{isotropic\_scalar} & 1.6361 & 66.56\% & 4.0\% & 88.0\% & Leak $=6.53e-08$ \\
+01. NA3D Frame & \texttt{planar\_so2} & 1.3215 & 69.30\% & 4.0\% & 88.0\% & Leak $=9.17e-08$ \\
+01. NA3D Frame & \texttt{unsplit\_na3d\_naive} & 1.1937 & 72.98\% & 8.0\% & 88.0\% & Leak $=7.88e-01$ \\
+01. NA3D Frame & \texttt{na3d\_stiefel} & 1.2165 & 73.10\% & 8.0\% & 88.0\% & Leak $=1.05e-07$ \\
+\midrule
+02. Sheaf Laplacian & \texttt{isotropic\_gcn} & 1.2854 & 72.23\% & 8.0\% & 88.0\% & $\mathcal{E}_t/\mathcal{E}_0=0.709$ \\
+02. Sheaf Laplacian & \texttt{scalar\_gat} & 1.3497 & 72.14\% & 8.0\% & 88.0\% & $\mathcal{E}_t/\mathcal{E}_0=0.986$ \\
+02. Sheaf Laplacian & \texttt{unnormalized\_antidiffusion} & 1.5964 & 71.14\% & 8.0\% & 88.0\% & $\mathcal{E}_t/\mathcal{E}_0=7.840$ \\
+02. Sheaf Laplacian & \texttt{cellular\_sheaf\_od} & 1.2165 & 73.11\% & 8.0\% & 88.0\% & $\mathcal{E}_t/\mathcal{E}_0=0.707$ \\
+\midrule
+05. Spectral MDL & \texttt{zero\_ttt} & 1.2649 & 72.72\% & 8.0\% & 88.0\% & $r_{\text{eff}}=3.46$ \\
+05. Spectral MDL & \texttt{standard\_l2\_ttt} & 1.2164 & 73.11\% & 8.0\% & 88.0\% & $r_{\text{eff}}=3.07$ \\
+05. Spectral MDL & \texttt{schatten2\_frobenius} & 1.2165 & 73.08\% & 8.0\% & 88.0\% & $r_{\text{eff}}=1.33$ \\
+05. Spectral MDL & \texttt{spectral\_mdl\_schatten1} & 1.2164 & 73.10\% & 8.0\% & 88.0\% & $r_{\text{eff}}=1.10$ \\
+\midrule
+06. Boundary Size & \texttt{identity\_baseline} & 1.5199 & 70.41\% & 4.0\% & 68.0\% & MAE $=7.04$ px \\
+06. Boundary Size & \texttt{global\_avg\_pooling} & 1.4284 & 72.15\% & 4.0\% & 72.0\% & MAE $=2.68$ px \\
+06. Boundary Size & \texttt{spatial\_mlp} & 2.3235 & 64.92\% & 0.0\% & 0.0\% & MAE $=12.68$ px \\
+06. Boundary Size & \texttt{boundary\_metric\_flux} & 1.2164 & 73.12\% & 8.0\% & 88.0\% & MAE $=0.40$ px \\
+\midrule
+07. Palette Budget & \texttt{unconstrained\_softmax} & 1.3540 & 71.75\% & 8.0\% & 88.0\% & EMD $=1.3488$ \\
+07. Palette Budget & \texttt{non\_equivariant\_mlp} & 1.3206 & 72.19\% & 8.0\% & 88.0\% & EMD $=0.6598$ \\
+07. Palette Budget & \texttt{no\_diode\_birkhoff} & 1.2124 & 72.89\% & 8.0\% & 88.0\% & EMD $=0.5606$ \\
+07. Palette Budget & \texttt{equivariant\_haar\_lrq} & 1.2165 & 73.11\% & 8.0\% & 88.0\% & EMD $=0.5523$ \\
+\midrule
+08. Geodesic TTT & \texttt{full\_fine\_tuning} & 1.2412 & 72.56\% & 8.0\% & 88.0\% & $D_4\times S_9$ Acc $=72.1\%$ \\
+08. Geodesic TTT & \texttt{euclidean\_lora} & 1.2471 & 72.43\% & 8.0\% & 88.0\% & $D_4\times S_9$ Acc $=72.2\%$ \\
+08. Geodesic TTT & \texttt{static\_color\_ttt} & 1.2451 & 72.47\% & 8.0\% & 88.0\% & $D_4\times S_9$ Acc $=72.1\%$ \\
+08. Geodesic TTT & \texttt{geodesic\_so3\_adapter} & 1.2087 & 72.68\% & 8.0\% & 88.0\% & $D_4\times S_9$ Acc $=72.3\%$ \\
+\bottomrule
+\end{tabular}
+\end{table*}

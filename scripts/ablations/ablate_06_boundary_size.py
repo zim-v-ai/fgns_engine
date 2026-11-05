@@ -76,7 +76,7 @@ def run_boundary_size_ablation(tasks: List[ARCTask], device: torch.device) -> Di
                         torch.zeros((b_sz, 1), dtype=torch.float32, device=dev),
                     )
 
-                model.size_oracle.compute_universal_proper_time_prior = identity_prior_hook  # type: ignore[method-assign]
+                setattr(model.size_oracle, "compute_universal_proper_time_prior", identity_prior_hook)
 
             elif cond == "global_avg_pooling":
                 def ratio_prior_hook(
@@ -103,7 +103,7 @@ def run_boundary_size_ablation(tasks: List[ARCTask], device: torch.device) -> Di
                         torch.zeros((b_sz, 1), dtype=torch.float32, device=dev),
                     )
 
-                model.size_oracle.compute_universal_proper_time_prior = ratio_prior_hook  # type: ignore[method-assign]
+                setattr(model.size_oracle, "compute_universal_proper_time_prior", ratio_prior_hook)
 
             elif cond == "spatial_mlp":
                 def zero_prior_hook(
@@ -120,7 +120,7 @@ def run_boundary_size_ablation(tasks: List[ARCTask], device: torch.device) -> Di
                         torch.ones((b_sz, 1), dtype=torch.float32, device=dev),
                     )
 
-                model.size_oracle.compute_universal_proper_time_prior = zero_prior_hook  # type: ignore[method-assign]
+                setattr(model.size_oracle, "compute_universal_proper_time_prior", zero_prior_hook)
 
             try:
                 run_honest_loo_support_adaptation(
@@ -140,7 +140,7 @@ def run_boundary_size_ablation(tasks: List[ARCTask], device: torch.device) -> Di
                 )
                 per_task_list.append(m_dict)
             finally:
-                model.size_oracle.compute_universal_proper_time_prior = orig_prior_fn  # type: ignore[method-assign]
+                setattr(model.size_oracle, "compute_universal_proper_time_prior", orig_prior_fn)
 
         if cond == "boundary_metric_flux":
             verdict_str = (

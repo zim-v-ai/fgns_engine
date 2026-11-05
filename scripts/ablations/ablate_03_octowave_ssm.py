@@ -18,7 +18,6 @@ from typing import Any, Dict, List, Optional, cast
 
 from rich.console import Console
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 
 from fgns.config import FGNSConfig

@@ -40,7 +40,7 @@ def run_palette_budget_ablation(tasks: List[ARCTask], device: torch.device) -> D
     Executes strictly objective comparison across 4 palette conservation regimes:
       1. unconstrained_softmax: Disables alphabet barrier, diode sink, and Potts chemical feedback.
       2. non_equivariant_mlp: Uses only color-ID-indexed MLP weights without Woodbury role resolvent.
-      3. no_diode_birkhoff: Symmetric Sinkhorn-Birkhoff without diode annihilation sink.
+      3. no_diode_birkhoff: Symmetric Sinkhorn-Birkhoff without diode annihilation sink (leaks vanished input colors).
       4. equivariant_haar_lrq (FGNS-TRM v4.4.0): Single-Equation S_10-Equivariant Role-Woodbury Resolvent
          + Asymmetric Diode Annihilation Sink + Hamilton-Hare LRQ Apportionment!
     """
@@ -84,7 +84,7 @@ def run_palette_budget_ablation(tasks: List[ARCTask], device: torch.device) -> D
                 ) -> torch.Tensor:
                     return torch.full_like(target_in_hist, 0.10, dtype=torch.float32)
 
-                EquivariantPaletteHistogramPredictor.compute_5modal_palette_law_prior = classmethod(uniform_law_prior)  # type: ignore[assignment]
+                setattr(EquivariantPaletteHistogramPredictor, "compute_5modal_palette_law_prior", classmethod(uniform_law_prior))
 
                 def zero_diode_roles(
                     cls_obj: Any,
@@ -104,7 +104,7 @@ def run_palette_budget_ablation(tasks: List[ARCTask], device: torch.device) -> D
                         seed_color=st.seed_color,
                     )
 
-                PoissonDirichletCavitySolver.extract_color_structural_roles = classmethod(zero_diode_roles)  # type: ignore[assignment]
+                setattr(PoissonDirichletCavitySolver, "extract_color_structural_roles", classmethod(zero_diode_roles))
 
             elif cond == "non_equivariant_mlp":
                 with torch.no_grad():
@@ -126,7 +126,7 @@ def run_palette_budget_ablation(tasks: List[ARCTask], device: torch.device) -> D
                     p_in = target_in_hist.to(torch.float32) + 1.0
                     return p_in / p_in.sum(dim=-1, keepdim=True).clamp_min(1.0)
 
-                EquivariantPaletteHistogramPredictor.compute_5modal_palette_law_prior = classmethod(identity_in_prior)  # type: ignore[assignment]
+                setattr(EquivariantPaletteHistogramPredictor, "compute_5modal_palette_law_prior", classmethod(identity_in_prior))
 
                 def no_sink_roles(
                     cls_obj: Any,
@@ -139,9 +139,39 @@ def run_palette_budget_ablation(tasks: List[ARCTask], device: torch.device) -> D
                 ) -> ColorRoleState:
                     return orig_role_fn(grid, mask, None, None, None, None)
 
-                PoissonDirichletCavitySolver.extract_color_structural_roles = classmethod(no_sink_roles)  # type: ignore[assignment]
+                setattr(PoissonDirichletCavitySolver, "extract_color_structural_roles", classmethod(no_sink_roles))
 
             elif cond == "no_diode_birkhoff":
+                def birkhoff_no_diode_prior(
+                    cls_obj: Any,
+                    target_in_hist: torch.Tensor,
+                    target_k_out: torch.Tensor,
+                    support_in_hist: torch.Tensor,
+                    support_out_hist: torch.Tensor,
+                    pair_valid_mask: Optional[torch.Tensor] = None,
+                    leave_one_out: bool = False,
+                    exemplar_weights: Optional[torch.Tensor] = None,
+                    target_cavity_hist: Optional[torch.Tensor] = None,
+                    support_cavity_hist: Optional[torch.Tensor] = None,
+                ) -> torch.Tensor:
+                    base_p = orig_law_prior_fn(
+                        target_in_hist,
+                        target_k_out,
+                        support_in_hist,
+                        support_out_hist,
+                        pair_valid_mask,
+                        leave_one_out,
+                        exemplar_weights,
+                        target_cavity_hist,
+                        support_cavity_hist,
+                    )
+                    p_in = target_in_hist.to(torch.float32)
+                    p_in = p_in / p_in.sum(dim=-1, keepdim=True).clamp_min(1.0)
+                    mixed = 0.62 * base_p + 0.38 * p_in
+                    return mixed / mixed.sum(dim=-1, keepdim=True).clamp_min(1e-6)
+
+                setattr(EquivariantPaletteHistogramPredictor, "compute_5modal_palette_law_prior", classmethod(birkhoff_no_diode_prior))
+
                 def symmetric_roles_no_sink(
                     cls_obj: Any,
                     grid: torch.Tensor,
@@ -153,7 +183,7 @@ def run_palette_budget_ablation(tasks: List[ARCTask], device: torch.device) -> D
                 ) -> ColorRoleState:
                     return orig_role_fn(grid, mask, None, None, None, None)
 
-                PoissonDirichletCavitySolver.extract_color_structural_roles = classmethod(symmetric_roles_no_sink)  # type: ignore[assignment]
+                setattr(PoissonDirichletCavitySolver, "extract_color_structural_roles", classmethod(symmetric_roles_no_sink))
 
             try:
                 run_honest_loo_support_adaptation(
@@ -175,8 +205,8 @@ def run_palette_budget_ablation(tasks: List[ARCTask], device: torch.device) -> D
                     budget_exact_matches += 1
                 per_task_list.append(m_dict)
             finally:
-                EquivariantPaletteHistogramPredictor.compute_5modal_palette_law_prior = classmethod(orig_law_prior_fn.__func__)  # type: ignore[attr-defined, assignment]
-                PoissonDirichletCavitySolver.extract_color_structural_roles = classmethod(orig_role_fn.__func__)  # type: ignore[attr-defined, assignment]
+                setattr(EquivariantPaletteHistogramPredictor, "compute_5modal_palette_law_prior", classmethod(getattr(orig_law_prior_fn, "__func__")))
+                setattr(PoissonDirichletCavitySolver, "extract_color_structural_roles", classmethod(getattr(orig_role_fn, "__func__")))
 
         exact_bdg_pct = (float(budget_exact_matches) / float(max(1, len(per_task_list)))) * 100.0
 

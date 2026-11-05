@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fgns_engine"
-version = "4.4.0"
+version = "5.0.0"
 description = "Finsler-Gauge Cellular Sheaf Network (FGNS-TRM) for ARC Prize 2026 (ARC-AGI-2)"
 license = { text = "MIT-0" }
 authors = [{ name = "Vyacheslav Zimovsky", email = "v.zimovsky.ai@gmail.com" }]
@@ -16,6 +16,7 @@ dependencies = [
     "triton-windows>=3.0.0; sys_platform == 'win32'",
     "numpy>=1.26.0",
     "scipy>=1.13.0",
+    "matplotlib>=3.9.0",
     "einops>=0.8.0",
     "pydantic>=2.8.0",
     "rich>=13.7.0"

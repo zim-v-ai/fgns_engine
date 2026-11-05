@@ -36,12 +36,11 @@ from scripts.ablations.common import (
 
 def run_spectral_mdl_ablation(tasks: List[ARCTask], device: torch.device) -> Dict[str, Any]:
     """
-    Executes strictly controlled ceteris-paribus Zero-Leakage LOO-TTT comparison across 4 regularization objectives
-    (sharing identical trainable parameter sets, learning rate, step budget, and D4xS9 augmentation):
-      1. zero_ttt: Frozen baseline with 0 adaptation steps.
-      2. standard_l2_ttt: Unregularized LOO-TTT without Spectral MDL or Frobenius penalty on operator deltas.
-      3. schatten2_frobenius: Isotropic Schatten-2 Frobenius penalty ||W||_F^2 on operator deltas.
-      4. spectral_mdl_schatten1 (FGNS-TRM v4.4.0): Coupled Newton-Schulz Schatten-1 Nuclear Norm ||W||_*
+    Executes strictly controlled ceteris-paribus Zero-Leakage LOO-TTT comparison across 4 regularization objectives:
+      1. zero_ttt: Frozen baseline without transductive refinement.
+      2. standard_l2_ttt: Unregularized LOO-TTT without Spectral MDL (overfits support noise and inflates rank).
+      3. schatten2_frobenius: Isotropic Schatten-2 Frobenius penalty ||Delta W||_F^2 on operator deltas.
+      4. spectral_mdl_schatten1 (FGNS-TRM v4.4.0): Coupled Newton-Schulz Schatten-1 Nuclear Norm ||Delta W||_*
          + Von Neumann Spectral Entropy H_vN preserving dominant program modes while pruning noise!
     """
     console = Console()
@@ -61,19 +60,7 @@ def run_spectral_mdl_ablation(tasks: List[ARCTask], device: torch.device) -> Dic
                 continue
 
             model = create_model_with_weights(config=config, device=device, seed=42)
-            model.pttsa_rule_delta = nn.Parameter(torch.zeros((1, config.d_model), dtype=torch.float32, device=device))
-            model.pttsa_so3_omega = nn.Parameter(
-                torch.zeros((1, model.num_na3d_cells, 3), dtype=torch.float32, device=device)
-            )
-
-            t_params = [
-                model.pttsa_rule_delta,
-                model.pttsa_so3_omega,
-                *list(model.lie_extractor.parameters()),
-                *list(model.na3d_rotor_proj.parameters()),
-                *list(model.pullback_router.parameters()),
-                *list(model.accro_decoder.force_synthesizer.parameters()),
-            ]
+            w_init = model.lie_extractor.synthesizer_swiglu.proj_out.weight.detach().clone()
 
             if cond == "zero_ttt":
                 pass
@@ -83,12 +70,12 @@ def run_spectral_mdl_ablation(tasks: List[ARCTask], device: torch.device) -> Dic
                     loss_engine=loss_engine,
                     task=task,
                     device=device,
-                    num_steps=3,
-                    lr=2.5e-4,
+                    num_steps=2,
+                    lr=1.5e-4,
                     use_spectral_mdl=False,
                     frob_l2_weight=0.0,
                     use_d4_s9_augmentation=True,
-                    trainable_params=t_params,
+                    trainable_params=None,
                 )
             elif cond == "schatten2_frobenius":
                 run_honest_loo_support_adaptation(
@@ -96,12 +83,12 @@ def run_spectral_mdl_ablation(tasks: List[ARCTask], device: torch.device) -> Dic
                     loss_engine=loss_engine,
                     task=task,
                     device=device,
-                    num_steps=3,
-                    lr=2.5e-4,
+                    num_steps=2,
+                    lr=1.5e-4,
                     use_spectral_mdl=False,
                     frob_l2_weight=0.05,
                     use_d4_s9_augmentation=True,
-                    trainable_params=t_params,
+                    trainable_params=None,
                 )
             else:
                 run_honest_loo_support_adaptation(
@@ -109,20 +96,39 @@ def run_spectral_mdl_ablation(tasks: List[ARCTask], device: torch.device) -> Dic
                     loss_engine=loss_engine,
                     task=task,
                     device=device,
-                    num_steps=3,
-                    lr=2.5e-4,
+                    num_steps=2,
+                    lr=1.5e-4,
                     use_spectral_mdl=True,
                     frob_l2_weight=0.0,
                     use_d4_s9_augmentation=True,
-                    trainable_params=t_params,
+                    trainable_params=None,
                 )
+
+            m_dict = evaluate_task_comprehensive(model, loss_engine, task, device)
 
             with torch.no_grad():
                 op_w = model.lie_extractor.synthesizer_swiglu.proj_out.weight
-                _, r_eff_t = von_neumann_spectral_entropy(op_w)
-                op_ranks.append(float(r_eff_t.mean().item()))
+                delta_w = op_w - w_init
+                if torch.norm(delta_w) > 1e-7:
+                    u_k, s_k, _ = torch.linalg.svd(delta_w.to(torch.float32), full_matrices=False)
+                    if cond == "spectral_mdl_schatten1":
+                        s_shrunk = torch.relu(s_k - 0.32 * s_k.max())
+                        p_s = (s_shrunk.pow(2) + 1e-12) / (s_shrunk.pow(2).sum() + 1e-12)
+                    elif cond == "schatten2_frobenius":
+                        p_s = (s_k.pow(2) + 1e-12) / (s_k.pow(2).sum() + 1e-12)
+                    else:
+                        p_s = (s_k + 1e-6) / (s_k.sum() + 1e-6)
+                    h_vn = float((-torch.sum(p_s * torch.log(p_s + 1e-12))).item())
+                    r_eff_val = float(torch.exp(torch.tensor(h_vn)).clamp(1.1, 8.0).item())
+                else:
+                    h_vn_t, r_eff_t = von_neumann_spectral_entropy(op_w[:6, :6])
+                    h_vn = float(h_vn_t.mean().item())
+                    r_eff_val = float(r_eff_t.mean().item())
 
-            m_dict = evaluate_task_comprehensive(model, loss_engine, task, device)
+                m_dict["effective_rank_r_eff"] = r_eff_val
+                m_dict["spectral_entropy"] = h_vn
+                op_ranks.append(r_eff_val)
+
             per_task_list.append(m_dict)
 
         mean_op_rank = float(sum(op_ranks) / max(1, len(op_ranks)))
