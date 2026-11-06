@@ -1,59 +1,109 @@
-# FGNS-TRM: Finsler-Gauge Cellular Sheaf Network with Spectral MDL Test-Time Adaptation for Abstract Reasoning
+# FGNS-TRM: Finsler-Gauge Cellular Sheaf Network for ARC-AGI-2
 
-(Клеточная пучковая сеть с калибровочной связностью Финслера и спектральной MDL-адаптацией во время тестирования для задач абстрактного мышления)
+[![Monograph](https://img.shields.io/badge/Monograph-PDF-blue.svg)](paper/FGNS_TRM_Monograph.pdf)
+[![License: MIT-0](https://img.shields.io/badge/License-MIT--0-green.svg)](LICENSE)
+[![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-brightgreen.svg)]()
 
-## Overview
+## Abstract & Overview
 
-FGNS-TRM is a pure neural reasoning engine designed for the ARC Prize 2026.
-It completely abandons combinatorial Domain-Specific Languages (DSL) in favor of:
+**FGNS-TRM** is an exploratory, continuous neural network architecture designed as an initial proof-of-concept for the [ARC Prize 2026 Paper Track](https://arcprize.org). Rather than relying on Large Language Model (LLM) code generation or combinatorial Domain-Specific Language (DSL) search, this project investigates a geometric alternative: whether canvas boundary estimation, discrete color-mass conservation, 3D spatial symmetry, and topological connectivity can be directly embedded into a compact **6.57M-parameter** continuous model trained from scratch.
 
-1. 8-Axis Isotropic Associative State Space Scanning (OctoWave Triton Kernel).
-2. Differentiable Graph Laplacian Spectral Topology (Moore N8 Connectedness).
-3. Multiscale Lie Group Coordinate Fibers (Analytic Kronecker X (x) X Invariance).
-4. Annealed Potts-Ginzburg-Landau STE Latching (Eliminating the 99.5% Trap).
-5. True Kolmogorov-Solomonoff Spectral Rank Minimum Description Length (MDL) TTT.
+The model unifies a universal geometric core with continuous differentiable operator relaxations across four primary architectural principles:
 
-## Academic Standard Nomenclature & Components
+1. **Two-Stage Upstream Conservation Priors:** Contracts the unconstrained combinatorial phase space ($11^{900} \approx 10^{937}$) prior to spatial decoding. *Stage I* (`BoundaryMetricSizePredictor`) predicts canvas dimensions $(H^\star, W^\star)$ over $\mathbb{Z}_{61} \times \mathbb{Z}_{61}$, pruning exterior cells to $10^{K_{\mathrm{cap}}}$ ($K_{\mathrm{cap}} = H^\star W^\star \le 900$). *Stage II* (`EquivariantPaletteHistogramPredictor`) predicts exact integer color quotas $\sum N_c^\star = K_{\mathrm{cap}}$ via $S_{10}$-equivariant descriptors, an $80\%$ diode sink, and Hamilton-Hare apportionment, contracting states to multinomial quotas $\frac{K_{\mathrm{cap}}!}{\prod_c (N_c^\star)!}$ and injecting them as a soft Potts chemical potential bias.
+2. **Orthogonal Color-Geometry Splitting (NA3D-Finsler-Lie):** Two-pass Modified Gram-Schmidt separates the 128D latent space into an invariant 11D color subspace $\mathcal{H}_{\mathrm{color}}$ and an orthogonal 117D geometric complement $\mathcal{H}_{\mathrm{geom}}$, ensuring machine-zero color leakage ($1.05 \times 10^{-7}$). Within $\mathcal{H}_{\mathrm{geom}}$, features act as 8 Non-Abelian Asymmetric 3D Token (NA3D) cells with oriented chiral volume $V = \det[L, C, R]$ and proper-time asymmetric Finsler-Randers drift.
+3. **8-Axis Scanning, Cellular Sheaves & Spectral-Green Operators:** Combines line-parallel 8-compass CUDA state-space scans (OctoWave), Stiefel cellular sheaf diffusion on $V_{32}(\mathbb{R}^{128})$ with edge-stopping coboundary Laplacians, Schur-complement relational slots, a Leave-One-Out Holographic Support Tape with $\mathrm{SO}(3)$ parallel transport, symplectic True XOR parity, and a 23-channel differentiable Spectral-Green RKHS operator.
+4. **Dual-State Cauchy Recurrence & Schatten-1 LOO-TTT:** Thought and draft states $(Z, P)$ evolve across 4 steps via analytical Cauchy resolvents with Lyapunov support gating, while transductive test-time adaptation optimizes low-rank weight deltas $\Delta W$ regularized by a Newton-Schulz Schatten-1 nuclear norm penalty.
 
-| Component | Academic Standard Name | Scientific Foundation |
+---
+
+## Technical Monograph
+
+The comprehensive 22-page mathematical monograph, complete with proofs, proposition derivations, empirical ablations, and figures, is available in the repository:
+
+- **Primary PDF:** [`FGNS_TRM_Monograph.pdf`](FGNS_TRM_Monograph.pdf)
+- **Paper Directory:** [`paper/FGNS_TRM_Monograph.pdf`](paper/FGNS_TRM_Monograph.pdf)
+- **Markdown Source:** [`paper/FGNS_TRM_Monograph.md`](paper/FGNS_TRM_Monograph.md)
+- **Kaggle Paper Track Writeup:** [`artifacts/paper_track/writeup.md`](artifacts/paper_track/writeup.md)
+
+---
+
+## Architectural Components
+
+| Component | Class / Module | Mathematical Role |
 | --- | --- | --- |
-| Main Model | `FinslerGaugeSheafNetwork` (FGNS) | Transductive network based on non-abelian cellular sheaf and Finsler metric |
-| Lattice Dimension | `BoundaryMetricSizePredictor` | Output lattice dimension predictor based on boundary flux and metric density |
-| Palette Budget | `EquivariantPaletteHistogramPredictor` | S_10-equivariant color multiset predictor with Haar projection (LRQ) |
-| Recurrent Decoder | `DualStateCauchyRecurrentDecoder` | Dual-state recurrent decoder (Z^(tau), Y^(tau)) with analytic Cauchy resolvent |
-| Active Loss | `ActiveDomainFocalLoss` | Focal loss computed strictly within the active domain lattice mask |
-| Multi-task Rank Loss | `SchattenNuclearMDLObjective` | Multitask objective with effective rank regularization via Schatten-1 nuclear norm |
-| TTT Adaptation | `TransductiveOperatorAdapter` | Test-Time Training module in low-rank operator and rule geodesic vector space |
-| Evaluation Pipeline | `EvaluationPipelineRunner` | Inference, cross-validation, and submission serialization pipeline |
-| Path Resolution | `DatasetPathResolver` | Path resolution utility for local and containerized environments |
-| Coordinate Encoder | `TopologicalCoordinateEncoder` | Input encoder unifying graph Laplacian spectral modes, color role invariants, and SO(3) triads |
-| Cross-Attention Memory | `SupportCrossAttentionMemory` | Non-local associative support memory with Rodrigues transport in SO(3) |
+| **Lattice Dimension** | `BoundaryMetricSizePredictor` | 8D 1-Jet geometric basis Stokes integration with Woodbury-Tikhonov Gram resolvent |
+| **Palette Budget** | `EquivariantPaletteHistogramPredictor` | $S_{10}$-equivariant role descriptors with Hamilton-Hare integer quota apportionment |
+| **Subspace Split** | `ModifiedGramSchmidt2` | Orthogonal projection $\mathbb{R}^{128} = \mathcal{H}_{\mathrm{color}}^{(11)} \oplus \mathcal{H}_{\mathrm{geom}}^{(117)}$ ($E P_{\mathrm{geom}} \equiv \mathbf{0}$) |
+| **3D Frame Dynamics** | `NA3DFinslerLie` | $\mathrm{SO}(3)$ Rodrigues exponential rotation of curvature core $\mathbf{C}_u$ with Finsler drift |
+| **State-Space Scan** | `OctoWaveSSM` | 8-compass line-parallel CUDA scan with Householder specular wall reflection |
+| **Cellular Sheaves** | `StiefelCellularSheafDiffusion` | Edge-stopping coboundary Laplacian on Stiefel manifold $V_{32}(\mathbb{R}^{128})$ |
+| **Green Operator** | `SpectralGreenWoodburyFunction` | Implicit adjoint PDE solver over 23-channel topological Green-RKHS basis |
+| **Recurrent Decoder** | `DualStateCauchyRecurrentDecoder` | 4-step dual-state $(Z, P)$ relaxation via proper-time dilated Cauchy resolvents |
+| **Test-Time Adaptation** | `TransductiveOperatorAdapter` | Low-rank perturbation adaptation under Newton-Schulz Schatten-1 nuclear penalty |
 
-## Hardware Target
+---
 
-- Native support for NVIDIA RTX 5070 (Blackwell 12GB GDDR7).
-- Operational peak VRAM ceiling: < 2.5 GB.
-- Test-Time Training throughput: > 65 TPS (~22,000 steps per 333s budget).
+## Repository Structure
 
-## Execution Protocol
+```text
+fgns_engine/
+├── FGNS_TRM_Monograph.pdf      # Complete 22-page academic monograph (PDF)
+├── paper/
+│   ├── FGNS_TRM_Monograph.md   # Mathematical monograph source (Markdown + KaTeX)
+│   └── FGNS_TRM_Monograph.pdf  # Canonical PDF build
+├── artifacts/
+│   ├── figures/                # High-resolution academic figures (fig00–fig07)
+│   └── paper_track/
+│       └── writeup.md          # ARC Prize 2026 Paper Track writeup (<1,500 words)
+├── fgns/
+│   ├── models/                 # PyTorch modules (NA3D, Sheaf, Cauchy, Size, Palette)
+│   ├── kernels/                # Triton and CUDA custom operators
+│   ├── primitives/             # Geometric and group-theoretic primitives
+│   └── solver/                 # Transductive inference and evaluation pipeline
+├── scripts/
+│   ├── build_monograph_pdf.py  # Automated PDF build pipeline with PyMuPDF verification
+│   └── figures/                # Standalone reproduction scripts for figures fig00–fig07
+├── tests/                      # PyTest unit and integration test suite
+└── LICENSE                     # MIT-0 License
+```
 
-### 3-Stage Meta-Learning, Transduction, and Evaluation
+---
 
- **Этап I (Офлайн-предобучение):**
+## Building the Monograph PDF
 
-  ```powershell
-  python -m fgns.train.meta_train.pipeline --data data/arc-agi_training_challenges.json --val-data data/arc-agi_training_challenges.json --val-size 100 --epochs 5 --lr 0.0003
-  ```
+The publication-grade PDF is built using Playwright Chromium and MathJax 3, including an automated PyMuPDF audit for zero unrendered LaTeX expressions and verified figure placement:
 
- **Этап II (Трансдуктивное LOO мета-обучение на `evaluation` с безградиентной проверкой на тесте):**
+```bash
+# Ensure dependencies are installed
+pip install playwright pymupdf markdown
+playwright install chromium
 
-  ```powershell
-  python -m fgns.train.meta_train.pipeline --data data/arc-agi_evaluation_challenges.json --val-data data/arc-agi_evaluation_challenges.json --mode loo --epochs 3 --lr 0.00015
-  ```
+# Compile and audit monograph PDF
+python scripts/build_monograph_pdf.py
+```
 
- **Этап III (Адаптация во время тестирования с $D_4 \times S_{10}$ и инспекция решений):**
+---
 
-  ```powershell
-  python -m fgns.solver.submit.eval_runner --data data/arc-agi_evaluation_challenges.json --tasks 5 --time 333
-  python scripts/inspect_submission.py --limit 5
-  ```
+## Running Verification Tests
+
+To verify component invariants (subspace orthogonality, unit Jacobian determinant, Stiefel constraints, and Cauchy decay):
+
+```bash
+pytest tests/ -v
+```
+
+---
+
+## Citation & License
+
+This research is released under the [MIT-0 License](LICENSE).
+
+```bibtex
+@article{zimovsky2026fgnstrm,
+  title   = {Finsler-Gauge Cellular Sheaf Network (FGNS-TRM): Geometric and Conservation Inductive Biases for ARC-AGI-2 Reasoning Without Program Synthesis},
+  author  = {Zimovsky, V.},
+  journal = {ARC Prize 2026 Paper Track Technical Monograph},
+  year    = {2026}
+}
+```
