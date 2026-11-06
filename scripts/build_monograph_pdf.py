@@ -28,10 +28,8 @@ MONOGRAPH_MD_PATH = PROJECT_ROOT / "paper" / "FGNS_TRM_Monograph.md"
 FIGURES_DIR = PROJECT_ROOT / "artifacts" / "figures"
 
 OUTPUT_PDF_ROOT = PROJECT_ROOT / "FGNS_TRM_Monograph.pdf"
-OUTPUT_PDF_ARTIFACTS_PAPER = PROJECT_ROOT / "artifacts" / "paper" / "FGNS_TRM_Monograph.pdf"
 OUTPUT_PDF_PAPER_DIR = PROJECT_ROOT / "paper" / "FGNS_TRM_Monograph.pdf"
-OUTPUT_PDF_LEGACY = PROJECT_ROOT / "artifacts" / "FGNS_TRM_ARC_Prize_2026_Monograph.pdf"
-BUILD_HTML_PATH = PROJECT_ROOT / "artifacts" / "paper" / "FGNS_TRM_Monograph_build.html"
+BUILD_HTML_PATH = PROJECT_ROOT / "paper" / ".build_monograph_tmp.html"
 
 
 EDGE_CANDIDATES = [
@@ -849,17 +847,19 @@ def build_monograph_pdf(output_path: Optional[Path] = None) -> Path:
     primary_pdf = output_path or OUTPUT_PDF_ROOT
     dom_stats = render_html_to_pdf(BUILD_HTML_PATH, primary_pdf)
 
-    # Mirror compiled PDF to all canonical locations in the repository
+    # Mirror compiled PDF to the 2 canonical locations (paper/ and repo root)
     mirror_targets = [
         OUTPUT_PDF_ROOT,
-        OUTPUT_PDF_ARTIFACTS_PAPER,
         OUTPUT_PDF_PAPER_DIR,
-        OUTPUT_PDF_LEGACY,
     ]
     for target in mirror_targets:
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.resolve() != primary_pdf.resolve():
             shutil.copy2(primary_pdf, target)
+
+    # Clean up temporary build html
+    if BUILD_HTML_PATH.exists():
+        BUILD_HTML_PATH.unlink(missing_ok=True)
 
     audit = verify_monograph_pdf(primary_pdf)
 
@@ -868,7 +868,6 @@ def build_monograph_pdf(output_path: Optional[Path] = None) -> Path:
     print("=" * 78)
     print(f"  Source Markdown          : {MONOGRAPH_MD_PATH}")
     print(f"  Primary Output PDF       : {OUTPUT_PDF_ROOT}")
-    print(f"  Artifacts Paper PDF      : {OUTPUT_PDF_ARTIFACTS_PAPER}")
     print(f"  Paper Directory PDF      : {OUTPUT_PDF_PAPER_DIR}")
     print(f"  File Size                : {audit['size_mb']:.2f} MB")
     print(f"  Total Pages (A4)         : {audit['num_pages']}")
