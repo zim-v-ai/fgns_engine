@@ -279,7 +279,7 @@ td {
 
 td[style*="text-align: center"],
 th[style*="text-align: center"] {
-    white-space: nowrap !important;
+    white-space: normal;
 }
 
 tbody tr:nth-child(even) {
@@ -287,12 +287,11 @@ tbody tr:nth-child(even) {
 }
 
 table code {
-    font-size: 6.5pt;
+    font-size: 6.25pt;
     padding: 0;
     background-color: transparent;
     border: none;
-    white-space: nowrap !important;
-    display: inline-block;
+    white-space: normal;
 }
 
 .table-caption {
