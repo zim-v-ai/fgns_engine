@@ -1,15 +1,11 @@
 """
 Location: // fgns_engine/scripts/figures/fig02_architecture_3d_stack.py
-Description: Nature Physics / PRX Publication Figure 2 — Two-Stage Upstream Conservation Priors
+Description: Nature Physics / PRX Publication Figure 2 — Two-Stage Upstream Structural Priors
              (Stage I: Boundary-Metric Dimension Prior & Stage II: Equivariant Cardinality
-             Quota Prior with Diode Sink) and Verified 6.57M-Parameter FGNS-TRM Architecture
-             Demonstrated on Real ARC-AGI-2 Evaluation Task 0934a4d8 (30x30 -> 9x3, 100% Exact).
-             Explicitly highlights both D4 symmetry sources on Panel (a):
-               1. Diagonal Transpose Source [y=0..2, x=14..17] -> Top 4 rows [y=14..17, x=0..2]
-               2. Vertical Reflection Source [y=9..13, x=0..2] across y_s=15.5 -> Bottom 5 rows [y=18..22, x=0..2]
+             Quota Prior with Diode Sink & Soft Potts Realization) and Verified 6.57M-Parameter
+             FGNS-TRM Architecture Demonstrated on Public Evaluation Task 0934a4d8 (30x30 -> 9x3).
 Author: Vyacheslav Zimovsky (v.zimovsky.ai@gmail.com)
 License: MIT-0
-Compliance: Zero-Hash Directives Strictly Enforced (Exclusively Docstrings for Comments)
 """
 
 from __future__ import annotations
@@ -20,7 +16,7 @@ from typing import Dict, Optional, Tuple
 
 import matplotlib
 from matplotlib.gridspec import GridSpec, GridSpecFromSubplotSpec
-from matplotlib.patches import FancyBboxPatch, Rectangle
+from matplotlib.patches import FancyBboxPatch, Patch, Rectangle
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -29,12 +25,16 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from fgns.models.fgns_network import FinslerGaugeSheafNetwork
 from scripts.figures.style_utils import (
     ARC_PALETTE_HEX,
     add_figure_header_banner,
     apply_nature_prx_rcparams,
     draw_panel_badge,
+    format_float_matrix_compact,
+    format_grid_2d_compact,
     get_cached_fgns_model,
+    record_figure_telemetry,
     render_arc_grid,
     run_real_task_inference,
 )
@@ -49,18 +49,16 @@ def extract_stage1_stage2_tensors_0934a4d8() -> Tuple[
     np.ndarray,
     np.ndarray,
     np.ndarray,
+    np.ndarray,
     Dict[str, int],
 ]:
     """
-    Runs the real 6.57M-parameter FinslerGaugeSheafNetwork on ARC-AGI-2 Evaluation Task
-    `0934a4d8` (30x30 -> 9x3) and extracts:
-    1. Input 30x30 grid, predicted 9x3 grid, and ground-truth 9x3 grid.
-    2. Stage I 2D joint probability distribution over (Delta H, Delta W).
-    3. Stage II integer color quotas N_c^* and input occluder counts.
-    4. Exact parameter breakdown across all submodules (totaling 6,574,411).
+    Runs the real 6,574,411-parameter FinslerGaugeSheafNetwork in 0-TTT mode on ARC-AGI-2
+    Public Evaluation Task `0934a4d8` (30x30 -> 9x3) and extracts Stage I/II tensors
+    and the exact D4 pullback coordinates u_sym, v_sym.
     """
-    model, _ = get_cached_fgns_model()
-    task, _, output = run_real_task_inference("0934a4d8")
+    model, device = get_cached_fgns_model()
+    task, batch, output = run_real_task_inference("0934a4d8")
 
     inp_grid = task.test[0].input_grid.to_tensor().numpy()
     assert task.test[0].output_grid is not None
@@ -74,6 +72,22 @@ def extract_stage1_stage2_tensors_0934a4d8() -> Tuple[
     pred_logits = output.query_logits[0, :pred_h, :pred_w, :10].to(torch.float32)
     pred_grid = torch.argmax(pred_logits, dim=-1).cpu().numpy()
 
+    with torch.no_grad():
+        q_in_t = batch.query.inputs[:, :in_h, :in_w]
+        q_mask_t = batch.query.in_masks[:, :in_h, :in_w]
+        u_sym, v_sym = FinslerGaugeSheafNetwork._compute_symmetry_reflected_occluder_coords(
+            grid=q_in_t,
+            mask=q_mask_t,
+            in_heights=torch.tensor([in_h], device=device),
+            in_widths=torch.tensor([in_w], device=device),
+            occ_y0=torch.tensor([14], device=device),
+            occ_x0=torch.tensor([0], device=device),
+            occ_h=torch.tensor([9], device=device),
+            occ_w=torch.tensor([3], device=device),
+        )
+        u_src_9x3 = u_sym[0, :9, :3].cpu().numpy()
+        v_src_9x3 = v_sym[0, :9, :3].cpu().numpy()
+
     dh_logits = output.query_h_pred[0].detach().cpu().float()
     dw_logits = output.query_w_pred[0].detach().cpu().float()
     p_dh = torch.softmax(dh_logits / 0.35, dim=-1).numpy()
@@ -86,7 +100,12 @@ def extract_stage1_stage2_tensors_0934a4d8() -> Tuple[
     joint_2d = np.outer(p_dh_slice, p_dw_slice)
     joint_2d = joint_2d / max(float(joint_2d.max()), 1e-8)
 
-    quotas_pred = np.bincount(pred_grid.ravel(), minlength=10)
+    # Extract 9x9 window around peak (-21, -27) -> indices (dh=-25..-17, dw=-29..-21)
+    peak_window_9x9 = joint_2d[4:13, 0:9]
+
+    assert output.query_budget is not None
+    quotas_stage2_prior = output.query_budget.predicted_counts[0].detach().cpu().round().to(torch.int64).numpy()
+    quotas_decoded = np.bincount(pred_grid.ravel(), minlength=10)
     inp_counts = np.bincount(inp_grid.ravel(), minlength=10)
 
     param_breakdown: Dict[str, int] = {}
@@ -94,20 +113,49 @@ def extract_stage1_stage2_tensors_0934a4d8() -> Tuple[
         param_breakdown[name] = sum(p.numel() for p in mod.parameters())
     param_breakdown["total"] = sum(p.numel() for p in model.parameters())
 
+    exact_px = int((pred_grid == gt_grid).sum())
+    total_px = int(gt_grid.size)
+    record_figure_telemetry(
+        "fig02_stage1_stage2_priors",
+        {
+            "evaluation_mode": "0_ttt_single_pass_transductive",
+            "task_id": "0934a4d8",
+            "input_shape": f"{in_h}x{in_w}",
+            "predicted_shape": f"{pred_h}x{pred_w}",
+            "ground_truth_shape": f"{gt_grid.shape[0]}x{gt_grid.shape[1]}",
+            "stage1_predicted_shift_dh_dw": [int(dh), int(dw)],
+            "d4_pullback_selected_op": "TRANSPOSE (y, x) -> (x, y) from [y=0..2, x=14..22]",
+            "d4_pullback_u_range": f"{int(u_src_9x3.min())}..{int(u_src_9x3.max())}",
+            "d4_pullback_v_range": f"{int(v_src_9x3.min())}..{int(v_src_9x3.max())}",
+            "stage2_soft_prior_quotas": [int(x) for x in quotas_stage2_prior.tolist()],
+            "final_decoded_histogram": [int(x) for x in quotas_decoded.tolist()],
+            "stage2_quota_sum": int(quotas_stage2_prior.sum()),
+            "diode_sink_c8_input_px": int(inp_counts[8]),
+            "diode_sink_c8_output_quota": int(quotas_stage2_prior[8]),
+            "pixel_accuracy_pct": 100.0 * float(exact_px) / float(total_px),
+            "total_parameters": int(param_breakdown["total"]),
+            "input_grid_30x30": format_grid_2d_compact(inp_grid),
+            "predicted_grid_9x3": format_grid_2d_compact(pred_grid),
+            "ground_truth_grid_9x3": format_grid_2d_compact(gt_grid),
+            "stage1_joint_posterior_peak_window_9x9": format_float_matrix_compact(peak_window_9x9, decimals=4),
+        },
+    )
+
     return (
         inp_grid,
         pred_grid,
         gt_grid,
         joint_2d,
         inp_counts,
-        quotas_pred,
+        quotas_stage2_prior,
+        quotas_decoded,
         param_breakdown,
     )
 
 
 def generate_fig02(output_dir: Optional[Path] = None) -> Path:
     """
-    Renders Figure 2: Two-Stage Upstream Conservation Priors on Task 0934a4d8 and
+    Renders Figure 2: Two-Stage Upstream Structural Priors on Task 0934a4d8 and
     the Verified 6.57M-Parameter Architectural Pipeline.
     """
     apply_nature_prx_rcparams()
@@ -121,15 +169,16 @@ def generate_fig02(output_dir: Optional[Path] = None) -> Path:
         gt_grid,
         joint_2d,
         inp_counts,
-        quotas_pred,
+        quotas_stage2_prior,
+        quotas_decoded,
         param_breakdown,
     ) = extract_stage1_stage2_tensors_0934a4d8()
 
     fig = plt.figure(figsize=(19.2, 10.8), dpi=350)
     add_figure_header_banner(
         fig,
-        "Figure 2 | Two-Stage Upstream Conservation Priors & 6.57M-Parameter FGNS-TRM Architecture (Task 0934a4d8)",
-        r"Stage I Boundary-Metric Dimension Prior ($30\times 30 \to 9\times 3$) and Stage II Equivariant Cardinality Quota Prior with Diode Sink (100.0% Exact Match)",
+        "Figure 2 | Two-Stage Upstream Structural Priors & 6.57M-Parameter FGNS-TRM Architecture (Task 0934a4d8)",
+        r"Stage I Boundary-Metric Dimension Prior ($30\times 30 \to 9\times 3$), Stage II Diode Sink & Disjoint $D_4$ Transpose Pullback (100.0% Exact Match)",
         y_top=0.958,
     )
 
@@ -157,8 +206,8 @@ def generate_fig02(output_dir: Optional[Path] = None) -> Path:
     draw_panel_badge(
         ax_a,
         "a",
-        "Blind Evaluation Input (Task 0934a4d8, 30x30)",
-        r"Cyan occluder [14:23, 0:3] & dual $D_4$ pullback sources around $(15.5, 15.5)$",
+        "Public Evaluation Input (Task 0934a4d8, 30x30)",
+        r"Cyan occluder [14:23, 0:3] & disjoint $D_4$ transpose source [0:3, 14:23]",
         badge_bg="#0F172A",
         x_pos=-0.02,
         y_pos=1.10,
@@ -168,76 +217,60 @@ def generate_fig02(output_dir: Optional[Path] = None) -> Path:
         ax_a,
         inp_grid,
         title=r"Input Lattice $X_q$ ($30\times 30 = 900$ px)",
-        subtitle=r"Dual $D_4$ pullback: Transpose [0:3, 14:18] + Reflection [9:14, 0:3]",
+        subtitle=r"Disjoint $D_4$ transpose pullback $[14:23, 0:3] \mapsto [0:3, 14:23]$",
         show_values=False,
-        highlight_box=(14, 0, 9, 3, "#FFFFFF", "-"),
+        highlight_box=None,
         show_ticks=True,
         title_fontsize=9.0,
     )
 
-    """Source 1: Diagonal Transpose Patch [y=0..2, x=14..17] (3x4 -> 4x3 top rows 14..17)"""
+    # Full 3x9 Transpose Source [y=0..2, x=14..22] selected by _compute_symmetry_reflected_occluder_coords
     rect_transpose_src = Rectangle(
         (14 - 0.48, 0 - 0.48),
-        3.96,
+        8.96,
         2.96,
         fill=False,
         edgecolor="#FACC15",
-        linewidth=2.5,
+        linewidth=2.6,
         linestyle="-",
         zorder=11,
     )
     ax_a.add_patch(rect_transpose_src)
 
-    """Source 2: Vertical Reflection Patch [y=9..13, x=0..2] across y_s=15.5 (5x3 bottom rows 18..22)"""
-    rect_reflect_src = Rectangle(
-        (0 - 0.48, 9 - 0.48),
+    # Target 9x3 Occluder Box at [y=14..22, x=0..2] (shifted 5 pixels down from y=9 to y=14!)
+    rect_target_occ = Rectangle(
+        (0 - 0.48, 14 - 0.48),
         2.96,
-        4.96,
+        8.96,
         fill=False,
         edgecolor="#10B981",
-        linewidth=2.5,
+        linewidth=2.6,
         linestyle="-",
-        zorder=11,
+        zorder=12,
     )
-    ax_a.add_patch(rect_reflect_src)
+    ax_a.add_patch(rect_target_occ)
 
-    """Shifted D4 symmetry axes: y_s = 15.5, x_s = 15.5, and main diagonal y = x"""
-    ax_a.axvline(15.5, color="#F59E0B", linewidth=1.6, linestyle="--", alpha=0.90, zorder=10)
-    ax_a.axhline(15.5, color="#10B981", linewidth=1.8, linestyle="--", alpha=0.95, zorder=10)
-    ax_a.plot([-0.5, 29.5], [-0.5, 29.5], color="#FACC15", linewidth=1.2, linestyle=":", alpha=0.80, zorder=9)
+    ax_a.axvline(15.5, color="#F59E0B", linewidth=1.5, linestyle="--", alpha=0.88, zorder=10)
+    ax_a.axhline(15.5, color="#10B981", linewidth=1.7, linestyle="--", alpha=0.92, zorder=10)
+    ax_a.plot([-0.5, 29.5], [-0.5, 29.5], color="#FACC15", linewidth=1.3, linestyle=":", alpha=0.85, zorder=9)
 
-    """Arrow 1: Transpose pullback from (y=1.5, x=15.5) to top of occluder (y=15.5, x=1.5)"""
     ax_a.annotate(
         "",
-        xy=(1.5, 15.5),
-        xytext=(15.5, 1.5),
+        xy=(1.5, 18.0),
+        xytext=(18.0, 1.5),
         arrowprops=dict(
-            arrowstyle="-|>,head_width=0.34,head_length=0.38",
-            connectionstyle="arc3,rad=0.20",
+            arrowstyle="-|>,head_width=0.35,head_length=0.40",
+            connectionstyle="arc3,rad=0.22",
             color="#FACC15",
-            lw=2.1,
-        ),
-        zorder=14,
-    )
-
-    """Arrow 2: Vertical reflection across y_s = 15.5 from (y=11.0, x=1.5) to (y=20.0, x=1.5)"""
-    ax_a.annotate(
-        "",
-        xy=(2.6, 20.2),
-        xytext=(2.6, 11.2),
-        arrowprops=dict(
-            arrowstyle="-|>,head_width=0.34,head_length=0.38",
-            connectionstyle="arc3,rad=-0.42",
-            color="#10B981",
-            lw=2.2,
+            lw=2.3,
         ),
         zorder=14,
     )
 
     ax_a.text(
-        16.2,
-        4.6,
-        r"1. Transpose $(y,x)\!\mapsto\!(x,y)$" + "\nRows 14..17 (`7 7 9`, `7 2 9`)",
+        18.2,
+        5.0,
+        r"Source $3\times 9$ [y=0:3, x=14:23]" + "\n" + r"Transpose $T_{\mathrm{diag}}: (y,x)\!\mapsto\!(x,y)$",
         ha="center",
         va="center",
         fontsize=7.2,
@@ -247,27 +280,15 @@ def generate_fig02(output_dir: Optional[Path] = None) -> Path:
         zorder=15,
     )
     ax_a.text(
-        11.8,
-        11.2,
-        r"2. Mirror $y'\!=\!31-y$ ($y_s\!=\!15.5$)" + "\nRows 18..22 (`4 4 7`..`1 6 1`)",
+        4.0,
+        24.6,
+        f"Target Cyan Occluder (c=8)\n[y=14:23, x=0:3] (9x3 = {int(inp_counts[8])} px)",
         ha="left",
-        va="center",
-        fontsize=7.2,
+        va="top",
+        fontsize=7.3,
         fontweight="bold",
         color="#A7F3D0",
         bbox=dict(boxstyle="round,pad=0.20", facecolor="#0F172A", edgecolor="#10B981", lw=1.1, alpha=0.92),
-        zorder=15,
-    )
-    ax_a.text(
-        4.0,
-        24.6,
-        "Cyan Mask (c=8)\n9x3 = 27 px",
-        ha="left",
-        va="top",
-        fontsize=7.5,
-        fontweight="bold",
-        color="#FFFFFF",
-        bbox=dict(boxstyle="round,pad=0.2", facecolor="#0F172A", edgecolor="#38BDF8", lw=1.0, alpha=0.92),
         zorder=15,
     )
 
@@ -276,7 +297,7 @@ def generate_fig02(output_dir: Optional[Path] = None) -> Path:
         ax_b,
         "b",
         "Stage I Prior: Boundary-Metric Dimension Oracle",
-        r"Relative displacement posterior $P(\Delta H, \Delta W \mid \mathcal{D}_{\mathrm{sup}}, X_q)$ on $\mathbb{Z}_{61}$",
+        r"Factorized marginal displacement posterior $P_H(\Delta H)P_W(\Delta W)$ on $\mathbb{Z}_{61}\times\mathbb{Z}_{61}$",
         badge_bg="#1E40AF",
         x_pos=-0.02,
         y_pos=1.10,
@@ -301,7 +322,7 @@ def generate_fig02(output_dir: Optional[Path] = None) -> Path:
         + r"$(\Delta H^\star, \Delta W^\star) = (-21, -27)$"
         + "\n"
         + r"$\Rightarrow (H^\star, W^\star) = (9, 3)$"
-        + "\n(100.0% Size Exact Match)",
+        + "\n(Exact Dimension Match)",
         xy=(-27, -21),
         xytext=(-18.5, -9.5),
         arrowprops=dict(arrowstyle="-|>,head_width=0.28,head_length=0.32", color="#E11D48", lw=1.8),
@@ -315,7 +336,7 @@ def generate_fig02(output_dir: Optional[Path] = None) -> Path:
     ax_b.set_xlabel(r"Horizontal Width Shift $\Delta W = W_{\mathrm{out}} - W_{\mathrm{in}}$", fontsize=8.6)
     ax_b.set_ylabel(r"Vertical Height Shift $\Delta H = H_{\mathrm{out}} - H_{\mathrm{in}}$", fontsize=8.6)
     ax_b.set_title(
-        r"Joint Displacement Density $P(\Delta H, \Delta W)$" + "\nInvariant to absolute canvas size shifts",
+        r"Factorized Marginal Posterior $P_H(\Delta H)P_W(\Delta W)$" + "\n1-Jet Stokes & Woodbury-Tikhonov peak",
         fontsize=9.2,
         fontweight="bold",
         color="#0F172A",
@@ -332,8 +353,8 @@ def generate_fig02(output_dir: Optional[Path] = None) -> Path:
     draw_panel_badge(
         ax_c1,
         "c",
-        "Stage II Prior: Equivariant Quotas & Diode Sink",
-        r"Hamilton-Hare integer quotas $\sum_c N_c^\star = 27$ with Diode Sink ($\alpha_8 = 0 \Rightarrow N_8^\star = 0$)",
+        "Stage II Prior: Soft Quota Bias & Diode Sink",
+        r"Hamilton-Hare quotas $\sum_c N_c^\star = 27$ ($\alpha_8^{\mathrm{sink}} = 1 \Rightarrow N_8^\star = 0$) vs. Decoded Counts",
         badge_bg="#047857",
         x_pos=-0.04,
         y_pos=1.10,
@@ -342,65 +363,100 @@ def generate_fig02(output_dir: Optional[Path] = None) -> Path:
 
     colors_idx = np.arange(10)
     bar_colors = [ARC_PALETTE_HEX[c] for c in colors_idx]
+    bar_w = 0.37
+
     ax_c1.bar(
-        colors_idx,
-        quotas_pred,
-        width=0.68,
+        colors_idx - bar_w * 0.52,
+        quotas_stage2_prior,
+        width=bar_w,
+        color=bar_colors,
+        edgecolor="#475569",
+        linewidth=0.9,
+        linestyle="--",
+        alpha=0.42,
+        zorder=3,
+    )
+    ax_c1.bar(
+        colors_idx + bar_w * 0.52,
+        quotas_decoded,
+        width=bar_w,
         color=bar_colors,
         edgecolor="#0F172A",
-        linewidth=1.1,
+        linewidth=1.15,
+        alpha=0.98,
         zorder=4,
     )
     ax_c1.grid(axis="y", linestyle=":", alpha=0.5, color="#CBD5E1", zorder=1)
-    for c_i, val in enumerate(quotas_pred):
-        if val > 0:
+
+    for c_i in range(10):
+        vp = int(quotas_stage2_prior[c_i])
+        vd = int(quotas_decoded[c_i])
+        if vd > 0:
             ax_c1.text(
-                c_i,
-                val + 0.32,
-                f"{int(val)}",
+                c_i + bar_w * 0.52,
+                vd + 0.25,
+                f"{vd}",
                 ha="center",
                 va="bottom",
-                fontsize=8.2,
+                fontsize=7.8,
                 fontweight="bold",
                 color="#0F172A",
+            )
+        if vp > 0 and vp != vd:
+            ax_c1.text(
+                c_i - bar_w * 0.52,
+                vp + 0.20,
+                f"{vp}",
+                ha="center",
+                va="bottom",
+                fontsize=6.8,
+                color="#64748B",
             )
 
     ax_c1.scatter([8], [0.4], color="#E11D48", marker="x", s=70, linewidths=2.2, zorder=9)
     ax_c1.annotate(
-        "Diode Annihilation Sink\n" + r"$c=8$ (Cyan Mask): $27 \to 0$ px",
+        "Diode Annihilation Sink\n" + rf"$\alpha_8^{{\mathrm{{sink}}}}=1$: $c=8$ ({int(inp_counts[8])} $\to$ 0 px)",
         xy=(8.0, 0.55),
-        xytext=(0.4, 9.1),
+        xytext=(0.3, 9.2),
         arrowprops=dict(arrowstyle="-|>,head_width=0.25,head_length=0.3", color="#E11D48", lw=1.6),
-        fontsize=7.6,
+        fontsize=7.4,
         fontweight="bold",
         color="#9F1239",
-        bbox=dict(boxstyle="round,pad=0.24", facecolor="#FFF1F2", edgecolor="#F43F5E", lw=1.0),
+        bbox=dict(boxstyle="round,pad=0.22", facecolor="#FFF1F2", edgecolor="#F43F5E", lw=1.0),
         zorder=10,
     )
 
+    legend_handles = [
+        Patch(facecolor="#94A3B8", edgecolor="#475569", linestyle="--", alpha=0.45, label=r"Stage II Soft Prior $N_c^\star$"),
+        Patch(facecolor="#059669", edgecolor="#0F172A", alpha=0.95, label=r"Decoded Patch $N_{c,\mathrm{out}}$"),
+    ]
+    ax_c1.legend(handles=legend_handles, loc="upper right", fontsize=6.6, frameon=True, facecolor="#FFFFFF", edgecolor="#CBD5E1")
+
     ax_c1.set_xticks(colors_idx)
     ax_c1.set_xticklabels([f"c{i}" for i in colors_idx], fontsize=7.8)
-    ax_c1.set_ylim(0, 11.2)
+    ax_c1.set_ylim(0, max(11.4, float(max(quotas_stage2_prior.max(), quotas_decoded.max())) + 2.6))
     ax_c1.set_xlabel(r"ARC Palette Symbol $c \in \{0,\dots,9\}$", fontsize=8.4)
-    ax_c1.set_ylabel(r"Exact Integer Quota $N_c^\star$ (Pixels)", fontsize=8.4)
+    ax_c1.set_ylabel("Pixel Count (Sum = 27 px)", fontsize=8.4)
     ax_c1.set_title(
-        "Stage II Apportioned Quotas\n" + r"$\Sigma_c N_c^\star = 9 \times 3 = 27$ Pixels",
-        fontsize=9.0,
+        "Stage II Soft Prior vs. Decoded Counts\n" + r"Soft Potts bias lets $D_4$ pullback refine local counts",
+        fontsize=8.8,
         fontweight="bold",
         color="#0F172A",
         pad=5.5,
     )
 
+    exact_px = int((pred_grid == gt_grid).sum())
+    total_px = int(gt_grid.size)
+    match_rate = 100.0 * float(exact_px) / float(total_px)
     render_arc_grid(
         ax_c2,
         pred_grid,
         title="Solved 9x3 Output",
-        subtitle="100.0% Exact (27/27 px)",
+        subtitle=f"{match_rate:.1f}% Exact ({exact_px}/{total_px} px)",
         show_values=True,
         title_color="#047857",
         title_fontsize=9.0,
     )
-    match_rate = 100.0 * float((pred_grid == gt_grid).mean())
     ax_c2.set_xlabel(f"Match vs. Ground Truth: {match_rate:.1f}%", fontsize=8.0, fontweight="bold", color="#047857", labelpad=5.0)
 
     ax_d = fig.add_subplot(outer_gs[1])
@@ -408,7 +464,7 @@ def generate_fig02(output_dir: Optional[Path] = None) -> Path:
         ax_d,
         "d",
         f"FGNS-TRM v5.0.0 Co-Design Pipeline & Exact {param_breakdown['total']:,}-Parameter (6.57M) Submodule Allocation",
-        "Upstream conservation priors bound the discrete state space by >10^14x before spatial gauge-sheaf PDE and Sinkhorn decoding execute",
+        "Upstream structural priors bound the discrete canvas and guide Potts chemical potentials before gauge-sheaf PDE and Cauchy decoding",
         badge_bg="#0F172A",
         x_pos=0.0,
         y_pos=1.06,
@@ -456,7 +512,7 @@ def generate_fig02(output_dir: Optional[Path] = None) -> Path:
             "#FFF1F2",
             "#BE123C",
             "5. Spectral-Green RKHS",
-            "DifferentiableSpectralGreenOp\n98,997 params (1.51%)\n" + r"$\mathbf{G}_\lambda \mathbf{W}^\star = \boldsymbol{\Psi}_S^\top \mathbf{M}_S \mathbf{Y}_S + \lambda \mathbf{W}_0$",
+            "DifferentiableSpectralGreenOp\n68,997 + Routers (1.05%)\n" + r"$\mathbf{G}_\lambda \mathbf{W}^\star = \boldsymbol{\Psi}_S^\top \mathbf{M}_S \mathbf{Y}_S + \lambda \mathbf{W}_0$",
         ),
         (
             85.6,
@@ -464,7 +520,7 @@ def generate_fig02(output_dir: Optional[Path] = None) -> Path:
             "#F0FDF4",
             "#15803D",
             "6. ACCRO + HoloTape",
-            "Potts Sinkhorn + Cauchy TTT\n1,475,051 params (22.44%)\n" + r"Enforces $\Sigma_x P_{x,c} = N_c^\star$",
+            "Potts Sinkhorn + Cauchy TTT\n1,475,051 params (22.44%)\n" + r"Soft Quota Bias + 4-Step Flow",
         ),
     ]
 
@@ -514,17 +570,19 @@ def generate_fig02(output_dir: Optional[Path] = None) -> Path:
         )
 
     total_p = param_breakdown["total"]
-    segments = [
-        ("SlotBinder (1.10M)", param_breakdown.get("slot_binder", 1096026), "#D97706"),
-        ("NA3D Lie (0.92M)", param_breakdown.get("lie_extractor", 922757), "#7C3AED"),
-        ("ACCRO Potts (0.85M)", param_breakdown.get("accro_decoder", 848231), "#059669"),
-        ("OctoWave SSM (0.82M)", param_breakdown.get("octowave_ssm", 816440), "#2563EB"),
-        ("Projector (0.71M)", param_breakdown.get("projector", 708429), "#4F46E5"),
-        ("HoloTape (0.63M)", param_breakdown.get("holographic_tape", 626820), "#0D9488"),
-        ("Stage I Size (0.63M)", param_breakdown.get("size_oracle", 625184), "#1D4ED8"),
-        ("Stiefel Sheaf (0.54M)", param_breakdown.get("slot_sheaf", 540928), "#9333EA"),
-        ("Quota+Rtr (0.42M)", param_breakdown.get("budget_oracle", 320599) + 98757, "#E11D48"),
+    first_8 = [
+        ("SlotBinder (1.10M)", param_breakdown["slot_binder"], "#D97706"),
+        ("NA3D Lie (0.92M)", param_breakdown["lie_extractor"], "#7C3AED"),
+        ("ACCRO Potts (0.85M)", param_breakdown["accro_decoder"], "#059669"),
+        ("OctoWave SSM (0.82M)", param_breakdown["octowave_ssm"], "#2563EB"),
+        ("Projector (0.71M)", param_breakdown["projector"], "#4F46E5"),
+        ("HoloTape (0.63M)", param_breakdown["holographic_tape"], "#0D9488"),
+        ("Stage I Size (0.63M)", param_breakdown["size_oracle"], "#1D4ED8"),
+        ("Stiefel Sheaf (0.54M)", param_breakdown["slot_sheaf"], "#9333EA"),
     ]
+    rem_count = total_p - sum(c for _, c, _ in first_8)
+    segments = [*first_8, ("Stage II+Green", rem_count, "#E11D48")]
+    assert sum(c for _, c, _ in segments) == total_p
 
     bar_x = 1.0
     bar_total_w = 98.2
@@ -552,13 +610,14 @@ def generate_fig02(output_dir: Optional[Path] = None) -> Path:
         )
         ax_d.add_patch(rect_s)
         if seg_w >= 5.2:
+            f_sz = 6.0 if seg_w < 6.5 else 6.7
             ax_d.text(
                 bar_x + seg_w / 2.0,
                 1.42,
                 label_s,
                 ha="center",
                 va="center",
-                fontsize=6.7,
+                fontsize=f_sz,
                 fontweight="bold",
                 color="#FFFFFF",
                 zorder=6,

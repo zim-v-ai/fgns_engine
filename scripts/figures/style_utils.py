@@ -1,22 +1,21 @@
 """
 Location: // fgns_engine/scripts/figures/style_utils.py
-Description: Shared Publication-Grade Styling, ARC Lattice Rendering Primitives, and Real
-             PyTorch Tensor Extraction Utilities for Nature Physics / PRX / Quanta Magazine
-             Visualizations of FGNS-TRM v5.0.0.
+Description: Shared Publication-Grade Styling, ARC Lattice Rendering Primitives, Strict
+             Checkpoint Auditor, Live Empirical Telemetry & 2D Grid/Matrix Registry, and Real
+             PyTorch Tensor Extraction Utilities for Nature Physics / PRX Visualizations of FGNS-TRM v5.0.0.
 Author: Vyacheslav Zimovsky (v.zimovsky.ai@gmail.com)
 License: MIT-0
-Compliance: Zero-Hash Directives Strictly Enforced (Exclusively Docstrings for Comments)
 """
 
 from __future__ import annotations
 
-import json
+import copy
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import matplotlib
 import matplotlib.colors as mcolors
-from matplotlib.patches import FancyBboxPatch, Rectangle
+from matplotlib.patches import Rectangle
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -24,6 +23,7 @@ import torch
 from fgns.config import FGNSConfig
 from fgns.env.batcher import FastVectorizedBatcher
 from fgns.env.task import ARCTask, load_arc_dataset
+from fgns.kernels.cuda_fgns_ops import is_cuda_kernel_image_usable
 from fgns.kernels.spectral_laplacian import PoissonDirichletCavitySolver
 from fgns.models.fgns_network import FinslerGaugeSheafNetwork
 from fgns.types import BatchData, ModelOutput
@@ -72,7 +72,77 @@ ARC_TEXT_CONTRAST: Tuple[str, ...] = (
 )
 
 _MODEL_SINGLETON: Optional[Tuple[FinslerGaugeSheafNetwork, torch.device]] = None
+_CHECKPOINT_STATE_CACHE: Optional[Dict[str, torch.Tensor]] = None
 _TASK_MAP_CACHE: Optional[Dict[str, ARCTask]] = None
+_FIGURE_AUDIT_REGISTRY: Dict[str, Dict[str, Any]] = {}
+
+
+def format_grid_2d_compact(grid_np: np.ndarray) -> List[str]:
+    """
+    Formats a 2D integer numpy grid into a list of compact row strings (with '.' for 0),
+    matching the visual schema of master_ablation_report.json.
+    """
+    arr = np.asarray(grid_np, dtype=np.int64)
+    if arr.ndim != 2:
+        return []
+    return [
+        " ".join(str(int(c)) if int(c) != 0 else "." for c in row)
+        for row in arr
+    ]
+
+
+def format_float_matrix_compact(mat_np: np.ndarray, decimals: int = 4) -> List[List[float]]:
+    """
+    Formats a 2D floating-point numpy matrix into a nested list of rounded Python floats
+    for clean serialization in figures_empirical_audit.json.
+    """
+    arr = np.asarray(mat_np, dtype=np.float64)
+    if arr.ndim != 2:
+        return []
+    return [
+        [round(float(val), decimals) for val in row]
+        for row in arr
+    ]
+
+
+def format_sci_matrix_compact(mat_np: np.ndarray, precision: int = 2) -> List[List[str]]:
+    """
+    Formats a 2D floating-point numpy matrix into scientific-notation strings (e.g. '1.54e-08')
+    so machine-zero orthogonal projection matrices are preserved without rounding to zero.
+    """
+    arr = np.asarray(mat_np, dtype=np.float64)
+    if arr.ndim != 2:
+        return []
+    return [
+        [f"{float(val):.{precision}e}" for val in row]
+        for row in arr
+    ]
+
+
+def record_figure_telemetry(figure_id: str, telemetry: Dict[str, Any]) -> None:
+    """
+    Records live empirical telemetry (including scalar metrics, 1D curves, and 2D grids/matrices)
+    extracted during figure generation and prints a concise scalar summary line to stdout.
+    """
+    _FIGURE_AUDIT_REGISTRY[figure_id] = telemetry
+    summary_pairs: List[str] = []
+    for k, v in telemetry.items():
+        if isinstance(v, float):
+            if abs(v) > 0 and (abs(v) < 1e-3 or abs(v) >= 1e4):
+                summary_pairs.append(f"{k}={v:.2e}")
+            else:
+                summary_pairs.append(f"{k}={v:.4f}")
+        elif isinstance(v, (int, str, bool)):
+            summary_pairs.append(f"{k}={v}")
+    joined = " | ".join(summary_pairs[:6])
+    print(f"    [TELEMETRY {figure_id}] {joined}", flush=True)
+
+
+def get_figure_audit_registry() -> Dict[str, Dict[str, Any]]:
+    """
+    Returns the accumulated dictionary of empirical telemetry across all generated figures.
+    """
+    return dict(_FIGURE_AUDIT_REGISTRY)
 
 
 def apply_nature_prx_rcparams() -> None:
@@ -187,8 +257,8 @@ def render_arc_grid(
     ax.set_ylim(h - 0.5, -0.5)
 
     if show_ticks:
-        step_x = 1 if w <= 10 else (5 if w <= 25 else 5)
-        step_y = 1 if h <= 10 else (5 if h <= 25 else 5)
+        step_x = 1 if w <= 10 else 5
+        step_y = 1 if h <= 10 else 5
         ax.set_xticks(np.arange(0, w, step_x))
         ax.set_yticks(np.arange(0, h, step_y))
         ax.tick_params(axis="both", which="major", labelsize=7.2, length=2.5, pad=2.0)
@@ -312,32 +382,82 @@ def add_figure_header_banner(
 
 def get_cached_fgns_model() -> Tuple[FinslerGaugeSheafNetwork, torch.device]:
     """
-    Loads and caches the 6.57M-parameter FinslerGaugeSheafNetwork on CUDA/CPU.
+    Loads, audits, and caches the 6,574,411-parameter FinslerGaugeSheafNetwork on CUDA/CPU.
+    Enforces strict checkpoint existence and verifies that all core parameters are loaded.
     """
-    global _MODEL_SINGLETON
+    global _MODEL_SINGLETON, _CHECKPOINT_STATE_CACHE
     if _MODEL_SINGLETON is not None:
+        PoissonDirichletCavitySolver.clear_cache()
         return _MODEL_SINGLETON
 
     PoissonDirichletCavitySolver.clear_cache()
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if is_cuda_kernel_image_usable() else "cpu")
+    if device.type == "cuda":
+        torch.backends.cuda.matmul.allow_tf32 = False
+
     config = FGNSConfig()
     model = FinslerGaugeSheafNetwork(config).to(device)
     ckpt = PROJECT_ROOT / "artifacts" / "checkpoints" / "model_final.pt"
-    if ckpt.is_file():
-        state = torch.load(ckpt, map_location=device, weights_only=False)
-        if isinstance(state, dict) and "models" in state and "model" in state["models"]:
-            state = state["models"]["model"]
-        elif isinstance(state, dict) and "model" in state:
-            state = state["model"]
-        model.load_state_dict(state, strict=False)
+    if not ckpt.is_file():
+        raise FileNotFoundError(
+            f"Required pretrained checkpoint not found at {ckpt}. "
+            "Empirical figure generation requires artifacts/checkpoints/model_final.pt."
+        )
+
+    raw_state = torch.load(ckpt, map_location=device, weights_only=False)
+    if isinstance(raw_state, dict) and "models" in raw_state and "model" in raw_state["models"]:
+        state = raw_state["models"]["model"]
+    elif isinstance(raw_state, dict) and "model" in raw_state:
+        state = raw_state["model"]
+    elif isinstance(raw_state, dict) and "state_dict" in raw_state:
+        state = raw_state["state_dict"]
+    else:
+        state = raw_state
+
+    missing_keys, _ = model.load_state_dict(state, strict=False)
+    missing_core = [
+        k for k in missing_keys
+        if not k.startswith("pttsa_") and not k.startswith("spectral_green_operator.")
+    ]
+    if missing_core:
+        raise RuntimeError(
+            f"Checkpoint {ckpt} is missing {len(missing_core)} core parameters: {missing_core[:5]}"
+        )
+
     model.eval()
+    _CHECKPOINT_STATE_CACHE = {k: v.detach().clone() for k, v in model.state_dict().items()}
     _MODEL_SINGLETON = (model, device)
+    total_params = sum(p.numel() for p in model.parameters())
+    dev_desc = f"{device} ({torch.cuda.get_device_name(device)})" if device.type == "cuda" else "cpu (CPU)"
+    print(
+        f"    [CHECKPOINT VERIFIED] Loaded {ckpt.name} on {dev_desc} ({total_params:,} params, 0 missing core keys)",
+        flush=True,
+    )
     return model, device
+
+
+def create_fresh_fgns_model_from_checkpoint(seed: int = 42) -> Tuple[FinslerGaugeSheafNetwork, torch.device]:
+    """
+    Creates an isolated FinslerGaugeSheafNetwork instance populated with the exact
+    pretrained checkpoint weights in memory for structural hooks or LOO-TTT runs.
+    """
+    global _CHECKPOINT_STATE_CACHE
+    base_model, device = get_cached_fgns_model()
+    PoissonDirichletCavitySolver.clear_cache()
+    torch.manual_seed(seed)
+    if device.type == "cuda":
+        torch.cuda.manual_seed_all(seed)
+
+    fresh_model = copy.deepcopy(base_model).to(device)
+    if _CHECKPOINT_STATE_CACHE is not None:
+        fresh_model.load_state_dict(_CHECKPOINT_STATE_CACHE, strict=True)
+    fresh_model.eval()
+    return fresh_model, device
 
 
 def get_arc2_eval_task(task_id: str) -> ARCTask:
     """
-    Retrieves a specific ARC-AGI-2 Evaluation task with its ground-truth solution.
+    Retrieves a specific ARC-AGI-2 Public Evaluation task with its ground-truth solution.
     """
     global _TASK_MAP_CACHE
     if _TASK_MAP_CACHE is None:
@@ -350,8 +470,8 @@ def get_arc2_eval_task(task_id: str) -> ARCTask:
 
 def run_real_task_inference(task_id: str) -> Tuple[ARCTask, BatchData, ModelOutput]:
     """
-    Executes a deterministic forward pass of FinslerGaugeSheafNetwork on the specified
-    ARC-AGI-2 Evaluation task and returns (task, batch, output).
+    Executes a deterministic 0-TTT single-pass forward pass of FinslerGaugeSheafNetwork
+    on the specified ARC-AGI-2 Public Evaluation task and returns (task, batch, output).
     """
     PoissonDirichletCavitySolver.clear_cache()
     model, device = get_cached_fgns_model()
@@ -369,6 +489,8 @@ def load_master_ablation_json() -> Dict[str, Any]:
     """
     Loads the empirical ablation report JSON from artifacts/logs/ablations/master_ablation_report.json.
     """
+    import json
+
     json_path = PROJECT_ROOT / "artifacts" / "logs" / "ablations" / "master_ablation_report.json"
     with open(json_path, "r", encoding="utf-8") as f:
         return json.load(f)

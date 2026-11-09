@@ -1,5 +1,5 @@
 """
-Location: scripts/figures/fig00_kaggle_card_thumbnail.py
+Location: // fgns_engine/scripts/figures/fig00_kaggle_card_thumbnail.py
 Description: Generates SOTA 2:1 (2800x1400 and 560x280 PNG, plus native SVG and PDF vector)
              architectural cover thumbnails for the Kaggle ARC Prize 2026 Paper Track Writeup:
              - Light Theme (fig00_kaggle_card_thumbnail.*): Warm editorial ivory Distill/Nature
@@ -10,16 +10,22 @@ Description: Generates SOTA 2:1 (2800x1400 and 560x280 PNG, plus native SVG and 
              - Dark Theme (fig00_cover_variant_dark_manifold.*): Modern Kaggle carbon-charcoal
                dark UI palette with signature warm yellow-gold (#FACC15 / #F59E0B) and cyan
                accents.
+             - Clean White Monograph Theme (fig00_pipeline_stages_white.*): Pure white background
+               without top banner for embedding in the technical monograph PDF.
 Author: Vyacheslav Zimovsky (v.zimovsky.ai@gmail.com)
 License: MIT-0
+Compliance: Zero-Hash Directives Strictly Enforced (Exclusively Docstrings for Comments)
 """
+
+from __future__ import annotations
 
 from pathlib import Path
 from typing import Optional
+
 import matplotlib.patheffects as pe
-import matplotlib.pyplot as plt
 from matplotlib.patches import Circle, PathPatch, Polygon
 from matplotlib.path import Path as MplPath
+import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
 
@@ -92,11 +98,8 @@ def draw_iso_keycap_tile(
     zorder: float = 3.0,
 ) -> None:
     """
-    Draws a plane-aligned 3D isometric tile whose base B = iso_pt(x_stage, u, v) rests flat on
-    the glass plane and whose front face F = B + d_out extrudes along the outward plane normal
-    d_out = (-dx, -dy) (down-and-left, facing the viewer in the exact same direction as the
-    glass plane). Because B = F - d_out lies up-and-right of F, the visible thickness bevels
-    are on the Top edge [f01, f11, b11, b01] and Right edge [f10, b10, b11, f11].
+    Draws a plane-aligned 3D isometric tile whose base rests flat on the glass plane
+    and whose front face extrudes along the outward plane normal.
     """
     base00 = iso_pt(x_stage, u0, v0)
     base10 = iso_pt(x_stage, u1, v0)
@@ -236,16 +239,9 @@ def render_cover_theme(
     out_stem: Path,
     dark_mode: bool = False,
     mode: Optional[str] = None,
-) -> None:
+) -> Path:
     """
     Renders the isometric 5-stage architectural diagram in PNG, SVG, and PDF.
-    Modes supported:
-      - 'light_clean': Pure white background (#FFFFFF), compact height (6.5), without top banner,
-                       optimized as an embedded academic figure for the technical monograph PDF.
-      - 'dark': Carbon-charcoal dark UI palette with signature warm yellow-gold and cyan accents,
-                including full editorial header banners (height 8.0).
-      - 'light' (or 'editorial'): Classic warm editorial ivory Distill/Nature theme with full
-                editorial header banners (height 8.0).
     """
     if mode is None:
         mode = "dark" if dark_mode else "light_clean"
@@ -952,7 +948,7 @@ def render_cover_theme(
             )
 
     stage_labels = [
-        ("01   DISCRETE LATTICE", "Input Grid & Conservation"),
+        ("01   DISCRETE LATTICE", "Input Grid & Structural Priors"),
         ("02   FIBER BUNDLE", r"Color $\oplus$ Geometry Lifting"),
         ("03   CELLULAR SHEAF", "Stiefel Parallel Transport"),
         ("04   SPECTRAL GREEN", "Harmonic RKHS & Wavefront"),
@@ -1023,14 +1019,19 @@ def render_cover_theme(
         im_560 = im_rgb.resize((560, 280), Image.Resampling.LANCZOS)
         im_560.save(out_thumb, quality=98)
 
+    return out_png
 
-def main() -> None:
+
+def generate_fig00(output_dir: Optional[Path] = None) -> Path:
+    """
+    Master orchestrator hook for scripts/figures/generate_all_figures.py.
+    Accepts `output_dir` and returns the primary PNG Path.
+    """
     root = Path(__file__).resolve().parents[2]
-    out_dir = root / "artifacts" / "figures"
+    out_dir = output_dir if output_dir is not None else (root / "artifacts" / "figures")
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Mode 1: Classic warm editorial beige/ivory theme with banner (for Kaggle Writeup & Card)
-    render_cover_theme(
+    primary_png = render_cover_theme(
         out_stem=out_dir / "fig00_kaggle_card_thumbnail",
         mode="editorial",
     )
@@ -1038,25 +1039,20 @@ def main() -> None:
         out_stem=out_dir / "fig00_cover_variant_editorial_beige",
         mode="editorial",
     )
-
-    # Mode 2: Carbon-charcoal dark manifold UI theme with yellow-gold & cyan banners
     render_cover_theme(
         out_stem=out_dir / "fig00_cover_variant_dark_manifold",
         mode="dark",
     )
-
-    # Mode 3: Clean academic figure on pure white background (#FFFFFF) without banner (for monograph PDF)
     render_cover_theme(
         out_stem=out_dir / "fig00_pipeline_stages_white",
         mode="light_clean",
     )
+    return primary_png
 
-    print("Generated all 3 cover modes: Dark Manifold, Warm Editorial Beige, and Pure White Pipeline.")
 
-
-def generate_fig00() -> None:
-    """Master orchestrator hook for scripts/figures/generate_all_figures.py."""
-    main()
+def main() -> None:
+    out = generate_fig00()
+    print(f"Saved: {out}")
 
 
 if __name__ == "__main__":

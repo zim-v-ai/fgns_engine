@@ -3,14 +3,14 @@ Location: // fgns_engine/scripts/figures/fig01_na3d_finsler_lie_3d.py
 Description: Nature Physics / PRX Publication Figure 1 — Native Rust 3D Ray-Traced Non-Abelian
              3D Lie Simplex (NA3D) inside Cutaway Finsler-Randers Indicatrix Shell, 3D
              Orthogonal Fiber Bundle R^128 = H_color^(11) (+) H_geom^(117), and Empirical
-             Proof of Theorem I (Zero Color-Subspace Leakage on Real ARC-AGI-2 Task 1818057f).
+             Verification of Lemma 1 (Zero Color-Subspace Leakage on Public Evaluation Task 1818057f).
 Author: Vyacheslav Zimovsky (v.zimovsky.ai@gmail.com)
 License: MIT-0
-Compliance: Zero-Hash Directives Strictly Enforced (Exclusively Docstrings for Comments)
 """
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 import sys
 from typing import Optional, Tuple
@@ -22,21 +22,91 @@ import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
 import torch
+import torch.nn.functional as F
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from fgns.env.batcher import FastVectorizedBatcher
+from fgns.primitives.stiefel_sheaf import NA3DFinslerLieEngine
 from scripts.figures.style_utils import (
     add_figure_header_banner,
     apply_nature_prx_rcparams,
+    create_fresh_fgns_model_from_checkpoint,
     draw_panel_badge,
+    format_float_matrix_compact,
+    format_grid_2d_compact,
+    format_sci_matrix_compact,
     get_arc2_eval_task,
-    get_cached_fgns_model,
+    load_master_ablation_json,
+    record_figure_telemetry,
     render_arc_grid,
 )
 
 matplotlib.use("Agg")
+
+
+def _compute_real_wilson_plaquette_field(
+    h_field_full: torch.Tensor,
+    y_slice: slice,
+    x_slice: slice,
+) -> np.ndarray:
+    """
+    Computes the authentic 2x2 Yang-Mills-Wilson plaquette curvature field
+    K_plaq(y, x) = 1 - cos(pi * tanh(||F_plaquette(y, x)||_2 / scale)) on the full 22x22
+    lattice of Task 1818057f before slicing the interior window [8:19, 10:21].
+    """
+    B, H, W, D = h_field_full.shape
+    num_cells = D // 16
+    cells = h_field_full.to(torch.float32).view(B, H, W, num_cells, 16)
+    l_face = cells[..., 0:3]
+    r_face = cells[..., 6:9]
+    v_beta = cells[..., 9:12]
+    v_norm = torch.sqrt(torch.sum(v_beta * v_beta, dim=-1, keepdim=True) + 1e-6)
+    beta_wind = (torch.tanh(v_norm) / v_norm) * v_beta
+    spin_local = torch.cross(l_face, r_face, dim=-1)
+
+    pack_9 = torch.cat([l_face, beta_wind, spin_local], dim=-1).view(B, H, W, num_cells * 9)
+    pack_pad = F.pad(pack_9.permute(0, 3, 1, 2), (1, 1, 1, 1), mode="replicate").permute(0, 2, 3, 1)
+
+    nb_n = pack_pad[:, :-2, 1:-1, :]
+    nb_s = pack_pad[:, 2:, 1:-1, :]
+    nb_w = pack_pad[:, 1:-1, :-2, :]
+    nb_e = pack_pad[:, 1:-1, 2:, :]
+    nb_stack = torch.stack([nb_n, nb_s, nb_w, nb_e], dim=1).view(B, 4, H, W, num_cells, 9)
+
+    l_nb = nb_stack[..., 0:3]
+    spin_nb = nb_stack[..., 6:9]
+    r_exp = r_face.unsqueeze(1)
+    spin_exp = spin_local.unsqueeze(1)
+
+    omega_gap = torch.cross(r_exp.expand_as(l_nb), l_nb, dim=-1)
+    comm_1 = torch.cross(spin_exp.expand_as(spin_nb), spin_nb, dim=-1)
+    comm_2 = torch.cross(spin_exp.expand_as(comm_1), comm_1, dim=-1) - torch.cross(spin_nb, comm_1, dim=-1)
+    omega_bch = omega_gap + (0.50 * comm_1) + ((1.0 / 12.0) * comm_2)
+
+    omega_s = omega_bch[:, 1]
+    omega_e = omega_bch[:, 3]
+    omega_e_south = torch.cat([omega_e[:, 1:, :, :, :], omega_e[:, -1:, :, :, :]], dim=1)
+    omega_s_east = torch.cat([omega_s[:, :, 1:, :, :], omega_s[:, :, -1:, :, :]], dim=2)
+
+    f_plaquette = (
+        omega_e
+        + omega_s_east
+        - omega_e_south
+        - omega_s
+        + 0.50 * (torch.cross(omega_e, omega_s_east, dim=-1) - torch.cross(omega_s, omega_e_south, dim=-1))
+    )
+    f_norm_full = torch.sqrt(torch.sum(f_plaquette * f_plaquette, dim=-1) + 1e-6).mean(dim=-1)[0]
+    f_patch = f_norm_full[y_slice, x_slice]
+
+    f_min = f_patch.min()
+    f_span = (f_patch.max() - f_min).clamp_min(1e-6)
+    f_rel = (f_patch - f_min) / f_span
+    wilson_curv = 0.50 * (1.0 - torch.cos(torch.tanh(1.35 * f_rel) * math.pi))
+    wilson_norm = wilson_curv / wilson_curv.max().clamp_min(1e-6)
+    return wilson_norm.detach().cpu().numpy()
 
 
 def extract_real_na3d_tensors() -> Tuple[
@@ -46,100 +116,195 @@ def extract_real_na3d_tensors() -> Tuple[
     np.ndarray,
     np.ndarray,
     np.ndarray,
+    np.ndarray,
+    float,
+    float,
     float,
     float,
 ]:
     """
-    Extracts real spatial curvature fields, Finsler-Randers metric parameters, and
-    color-subspace cross-leakage Jacobians directly from `model.lie_extractor` on
-    ARC-AGI-2 Evaluation Task `1818057f`.
+    Executes authentic 0-TTT forward passes and Lemma 1 (11 (+) 117 MGS2 orthogonal subspace
+    split vs. unsplit SO(3)^8 Rodrigues holonomy) directly on FinslerGaugeSheafNetwork
+    for ARC-AGI-2 Public Evaluation Task `1818057f`.
     """
-    model, device = get_cached_fgns_model()
-    task = get_arc2_eval_task("1818057f")
-    inp_grid = task.test[0].input_grid.to_tensor().numpy()
-    assert task.test[0].output_grid is not None
-    out_grid = task.test[0].output_grid.to_tensor().numpy()
+    prev_tf32 = torch.backends.cuda.matmul.allow_tf32 if torch.cuda.is_available() else False
+    if torch.cuda.is_available():
+        torch.backends.cuda.matmul.allow_tf32 = False
 
-    patch_in = inp_grid[8:19, 10:21].copy()
-    patch_out = out_grid[8:19, 10:21].copy()
+    try:
+        report = load_master_ablation_json()
+        res_01 = report["results"]["01_na3d_stiefel"]
+        bench_leak_unsplit = float(res_01["unsplit_na3d_naive"]["color_subspace_leakage"])
+        bench_leak_split = float(res_01["na3d_stiefel"]["color_subspace_leakage"])
 
-    with torch.no_grad():
-        grid_t = torch.tensor(patch_in, dtype=torch.long, device=device).unsqueeze(0)
-        mask_t = torch.ones_like(grid_t, dtype=torch.bool)
-        z_emb = model.projector(grid_t, mask_t)
-        h_lie = model.octowave_ssm(z_emb, mask_t)
+        model, device = create_fresh_fgns_model_from_checkpoint(seed=42)
+        task = get_arc2_eval_task("1818057f")
+        support = list(task.train)
+        query = [task.test[0]]
+        static_k = max(1, min(6, len(support)))
+        batch = FastVectorizedBatcher.assemble_batch([support], [query], device=device, static_k=static_k)
 
-        z_geom = h_lie[0].float()
-        gy = torch.norm(z_geom[1:, :, :] - z_geom[:-1, :, :], dim=-1)
-        gx = torch.norm(z_geom[:, 1:, :] - z_geom[:, :-1, :], dim=-1)
-        plaq = torch.zeros((11, 11), device=device)
-        plaq[:-1, :-1] = 0.5 * (gy[:, :-1] + gy[:, 1:] + gx[:-1, :] + gx[1:, :])
-        plaq[-1, :] = plaq[-2, :]
-        plaq[:, -1] = plaq[:, -2]
-        plaq_np = (plaq / plaq.max().clamp_min(1e-6)).cpu().numpy()
+        inp_grid = task.test[0].input_grid.to_tensor().numpy()
+        assert task.test[0].output_grid is not None
+        out_grid = task.test[0].output_grid.to_tensor().numpy()
+        y_sl = slice(8, 19)
+        x_sl = slice(10, 21)
+        patch_in = inp_grid[y_sl, x_sl].copy()
+        patch_out = out_grid[y_sl, x_sl].copy()
 
-        c_protos = model.projector.palette.get_normalized_prototypes()[:10].detach().float()
-        d_tot = c_protos.shape[-1]
-        d_geom = d_tot // 2
+        with torch.no_grad():
+            output_split = model(batch, tau=0.05, current_step_ratio=1.0)
+            pred_full_split = torch.argmax(
+                output_split.query_logits[0, :22, :22, :10].to(torch.float32), dim=-1
+            ).cpu().numpy()
+            pred_split_patch_base = pred_full_split[y_sl, x_sl].copy()
 
-        torch.manual_seed(42)
-        omega_full = torch.randn((d_tot, d_tot), device=device) * 0.42
-        omega_skew = 0.5 * (omega_full - omega_full.T)
-        rot_unsplit = torch.matrix_exp(omega_skew)
+            full_grid_t = torch.tensor(inp_grid, dtype=torch.long, device=device).unsqueeze(0)
+            full_mask_t = torch.ones_like(full_grid_t, dtype=torch.bool)
+            z_emb_full = model.projector(full_grid_t, full_mask_t)
+            h_lie_full = model.octowave_ssm(z_emb_full, full_mask_t)
+            h_lie_patch = h_lie_full[:, y_sl, x_sl, :]
 
-        rot_split = torch.eye(d_tot, device=device)
-        rot_split[:d_geom, :d_geom] = torch.matrix_exp(omega_skew[:d_geom, :d_geom])
+            plaq_np = _compute_real_wilson_plaquette_field(h_lie_full, y_sl, x_sl)
 
-        c_protos_unsplit = c_protos @ rot_unsplit.T
-        c_protos_split = c_protos @ rot_split.T
+            e_proto_all = model.projector.palette.get_normalized_prototypes().to(torch.float32)
+            e_proto_10 = e_proto_all[:10]
+            d_model = e_proto_all.shape[-1]
+            c_cells = d_model // 16
 
-        norm_orig = torch.nn.functional.normalize(c_protos[:, d_geom:], dim=-1)
-        sim_orig = torch.matmul(norm_orig, norm_orig.T)
+            z_rule_base = (
+                output_split.hyperbolic_rule.tangent_velocity.to(torch.float32)
+                if output_split.hyperbolic_rule is not None
+                else torch.ones((1, d_model), dtype=torch.float32, device=device)
+            )
+            probe_gen = torch.Generator(device=device).manual_seed(42)
+            z_probe = z_rule_base + 2.0 * torch.randn(
+                (1, d_model), dtype=torch.float32, device=device, generator=probe_gen
+            )
 
-        sim_unsplit = torch.matmul(
-            torch.nn.functional.normalize(c_protos_unsplit[:, d_geom:], dim=-1),
-            norm_orig.T,
+            def _unsplit_na3d_holonomy(
+                h_field: torch.Tensor,
+                z_rule: torch.Tensor,
+                gain_override: Optional[float] = None,
+            ) -> torch.Tensor:
+                orig_shape = h_field.shape
+                b_r = z_rule.shape[0]
+                h_f32 = h_field.to(torch.float32).view(b_r, -1, c_cells, 16)
+                omega_r = model.na3d_rotor_proj(z_rule).to(torch.float32).view(b_r, 1, c_cells, 3)
+                l_r = NA3DFinslerLieEngine.apply_rodrigues_rotation(h_f32[..., 0:3], omega_r)
+                c_r = NA3DFinslerLieEngine.apply_rodrigues_rotation(h_f32[..., 3:6], omega_r)
+                r_r = NA3DFinslerLieEngine.apply_rodrigues_rotation(h_f32[..., 6:9], omega_r)
+                rot_all = torch.cat([l_r, c_r, r_r, h_f32[..., 9:16]], dim=-1).view(b_r, -1, d_model)
+                h_flat_f32 = h_f32.view(b_r, -1, d_model)
+                g_na3d = (
+                    float(gain_override)
+                    if gain_override is not None
+                    else float(torch.tanh(model.na3d_action_gate.to(torch.float32)).item())
+                )
+                return (h_flat_f32 + g_na3d * (rot_all - h_flat_f32)).view(*orig_shape).to(h_field.dtype)
+
+            geom_context = h_lie_patch[0, :10, 0, :].to(torch.float32)
+            q_basis = model._get_exact_orthonormal_palette_basis()
+            gram_q = torch.matmul(q_basis, q_basis.t())
+            mgs2_ortho_err = float(torch.max(torch.abs(gram_q - torch.eye(11, device=device))).item())
+
+            geom_perp = geom_context - torch.matmul(torch.matmul(geom_context, q_basis.t()), q_basis)
+            h_color_probes = (e_proto_10 + 0.35 * geom_perp).view(1, 10, 1, d_model)
+
+            h_after_split = model._apply_na3d_cell_holonomy_action(h_color_probes, z_probe)
+            h_after_unsplit = _unsplit_na3d_holonomy(h_color_probes, z_probe)
+
+            diff_split = (h_after_split[0, :, 0, :] - h_color_probes[0, :, 0, :]).to(torch.float32)
+            diff_unsplit = (h_after_unsplit[0, :, 0, :] - h_color_probes[0, :, 0, :]).to(torch.float32)
+
+            leak_matrix_split_t = torch.abs(torch.matmul(diff_split, e_proto_10.t()))
+            leak_matrix_unsplit_t = torch.abs(torch.matmul(diff_unsplit, e_proto_10.t()))
+
+            leak_split_val = float(torch.max(leak_matrix_split_t).item())
+            leak_unsplit_val = float(torch.max(leak_matrix_unsplit_t).item())
+
+            leak_matrix_split = leak_matrix_split_t.detach().cpu().numpy()
+            leak_matrix_unsplit = leak_matrix_unsplit_t.detach().cpu().numpy()
+
+            # Construct latent patch state with natural 117D geometric energy from h_lie_patch
+            pred_patch_t = torch.tensor(pred_split_patch_base, dtype=torch.long, device=device).unsqueeze(0)
+            h_lie_flat = h_lie_patch.to(torch.float32).reshape(1, -1, d_model)
+            geom_patch_perp = (
+                h_lie_flat - torch.matmul(torch.matmul(h_lie_flat, q_basis.t()), q_basis)
+            ).view(1, 11, 11, d_model)
+            h_patch_clean = F.embedding(pred_patch_t, e_proto_all) + (0.85 * geom_patch_perp)
+
+            # 1. Apply Lemma 1 MGS2-Split NA3D Holonomy (3 steps) and decode on S^9
+            h_patch_split_rot = h_patch_clean
+            for step_rot in range(3):
+                h_patch_split_rot = model._apply_na3d_cell_holonomy_action(
+                    h_patch_split_rot, z_probe * (2.5 + 0.8 * step_rot)
+                )
+            psi_ones = torch.full((1, 11, 11, 1), 5.0, dtype=torch.float32, device=device)
+            logits_split = model.accro_decoder.potts_latching.compute_unified_sphere_logits(
+                h=h_patch_split_rot,
+                carrier_psi=psi_ones,
+            )
+            pred_split_patch = torch.argmax(logits_split[0, :, :, :10], dim=-1).detach().cpu().numpy()
+
+            # 2. Apply Unsplit SO(3)^8 Holonomy (3 steps) to the exact same state and decode on S^9
+            h_patch_unsplit_rot = h_patch_clean
+            for step_rot in range(3):
+                h_patch_unsplit_rot = _unsplit_na3d_holonomy(
+                    h_patch_unsplit_rot, z_probe * (2.5 + 0.8 * step_rot), gain_override=1.0
+                )
+            logits_unsplit = model.accro_decoder.potts_latching.compute_unified_sphere_logits(
+                h=h_patch_unsplit_rot,
+                carrier_psi=psi_ones,
+            )
+            corrupted_patch = torch.argmax(logits_unsplit[0, :, :, :10], dim=-1).detach().cpu().numpy()
+
+            split_patch_acc = 100.0 * float((pred_split_patch == patch_out).mean())
+            unsplit_patch_acc = 100.0 * float((corrupted_patch == patch_out).mean())
+
+            record_figure_telemetry(
+                "fig01_na3d_lemma1",
+                {
+                    "evaluation_mode": "0_ttt_single_pass_transductive",
+                    "task_id": "1818057f",
+                    "patch_window": "y=8..18, x=10..20 (11x11)",
+                    "mgs2_gram_orthogonality_error": mgs2_ortho_err,
+                    "unit_prototype_10x10_unsplit_max_leakage": leak_unsplit_val,
+                    "unit_prototype_10x10_split_max_leakage": leak_split_val,
+                    "benchmark_25task_unsplit_max_leakage": bench_leak_unsplit,
+                    "benchmark_25task_split_max_leakage": bench_leak_split,
+                    "leakage_reduction_ratio_patch": leak_unsplit_val / max(leak_split_val, 1e-12),
+                    "leakage_reduction_ratio_benchmark": bench_leak_unsplit / max(bench_leak_split, 1e-12),
+                    "split_patch_accuracy_pct": round(split_patch_acc, 2),
+                    "unsplit_rotated_patch_accuracy_pct": round(unsplit_patch_acc, 2),
+                    "leak_matrix_unsplit_mean": float(leak_matrix_unsplit.mean()),
+                    "leak_matrix_split_mean": float(leak_matrix_split.mean()),
+                    "input_patch_11x11": format_grid_2d_compact(patch_in),
+                    "target_patch_11x11": format_grid_2d_compact(patch_out),
+                    "unsplit_corrupted_patch_11x11": format_grid_2d_compact(corrupted_patch),
+                    "lemma1_split_predicted_patch_11x11": format_grid_2d_compact(pred_split_patch),
+                    "wilson_plaquette_curvature_11x11": format_float_matrix_compact(plaq_np, decimals=3),
+                    "leak_matrix_unsplit_10x10": format_float_matrix_compact(leak_matrix_unsplit, decimals=4),
+                    "leak_matrix_split_10x10_sci": format_sci_matrix_compact(leak_matrix_split, precision=2),
+                },
+            )
+
+        return (
+            patch_in,
+            patch_out,
+            pred_split_patch,
+            corrupted_patch,
+            plaq_np,
+            leak_matrix_unsplit,
+            leak_matrix_split,
+            leak_unsplit_val,
+            leak_split_val,
+            bench_leak_unsplit,
+            bench_leak_split,
         )
-        leak_matrix_unsplit = (sim_unsplit - sim_orig).abs().cpu().numpy()
-
-        sim_split = torch.matmul(
-            torch.nn.functional.normalize(c_protos_split[:, d_geom:], dim=-1),
-            norm_orig.T,
-        )
-        leak_matrix_split = (sim_split - sim_orig).abs().cpu().numpy()
-        leak_matrix_split = np.maximum(leak_matrix_split, 1.05e-7 * np.ones_like(leak_matrix_split))
-        np.fill_diagonal(leak_matrix_split, 0.0)
-
-        h_patch = torch.tensor(patch_out, dtype=torch.long, device=device)
-        emb_patch = c_protos[h_patch]
-        yy, xx = torch.meshgrid(
-            torch.linspace(-1.0, 1.0, 11, device=device),
-            torch.linspace(-1.0, 1.0, 11, device=device),
-            indexing="ij",
-        )
-        angle_field = 0.85 * (yy + xx)
-        corrupted_patch = patch_out.copy()
-        for r in range(11):
-            for c in range(11):
-                if patch_out[r, c] != 0:
-                    rot_local = torch.matrix_exp(float(angle_field[r, c].item()) * omega_skew)
-                    v_rot = emb_patch[r, c] @ rot_local.T
-                    dists = torch.norm(c_protos[:, d_geom:] - v_rot[d_geom:].unsqueeze(0), dim=-1)
-                    corrupted_patch[r, c] = int(torch.argmin(dists).item())
-
-        leak_unsplit_val = 0.788
-        leak_split_val = 1.05e-7
-
-    return (
-        patch_in,
-        patch_out,
-        corrupted_patch,
-        plaq_np,
-        leak_matrix_unsplit,
-        leak_matrix_split,
-        leak_unsplit_val,
-        leak_split_val,
-    )
+    finally:
+        if torch.cuda.is_available():
+            torch.backends.cuda.matmul.allow_tf32 = prev_tf32
 
 
 def _load_rust_render(output_dir: Path, filename: str) -> Optional[np.ndarray]:
@@ -166,7 +331,7 @@ def generate_fig01(output_dir: Optional[Path] = None) -> Path:
     """
     Renders Figure 1: Native 3D Ray-Traced NA3D Oriented Simplex inside Finsler-Randers
     Indicatrix Shell, 3D Orthogonal Fiber Bundle H_color^(11) (+) H_geom^(117), and
-    Empirical Proof of Theorem I on Real ARC-AGI-2 Task 1818057f.
+    Empirical Verification of Lemma 1 on Public Evaluation Task 1818057f.
     """
     apply_nature_prx_rcparams()
     if output_dir is None:
@@ -176,12 +341,15 @@ def generate_fig01(output_dir: Optional[Path] = None) -> Path:
     (
         patch_in,
         patch_out,
+        pred_split_patch,
         corrupted_patch,
         plaq_np,
         leak_matrix_unsplit,
         leak_matrix_split,
         leak_unsplit_val,
         leak_split_val,
+        bench_leak_unsplit,
+        bench_leak_split,
     ) = extract_real_na3d_tensors()
 
     scene1_img = _load_rust_render(output_dir, "scene1_na3d_finsler")
@@ -190,8 +358,8 @@ def generate_fig01(output_dir: Optional[Path] = None) -> Path:
     fig = plt.figure(figsize=(19.2, 10.8), dpi=350)
     add_figure_header_banner(
         fig,
-        "Figure 1 | Non-Abelian 3D Lie Simplex (NA3D), Asymmetric Finsler-Randers Indicatrix & Theorem I Orthogonal Bundle",
-        "Native Rust GGX 3D ray-traced manifold geometry paired with real intermediate tensors from ARC-AGI-2 Task 1818057f proving zero color-subspace leakage",
+        "Figure 1 | Non-Abelian 3D Lie Simplex (NA3D), Asymmetric Finsler-Randers Indicatrix & Lemma 1 Orthogonal Bundle",
+        "Native Rust GGX 3D ray-traced manifold geometry paired with real NA3D tensors from ARC-AGI-2 Task 1818057f verifying machine-zero color-subspace leakage",
         y_top=0.958,
     )
 
@@ -385,7 +553,8 @@ def generate_fig01(output_dir: Optional[Path] = None) -> Path:
     ax_b2.set_xticks([])
     ax_b2.set_yticks([])
     ax_b2.set_title(
-        "Plaquette Curvature (Task 1818057f)\n" + r"$\mathcal{K}_{\mathrm{plaq}}(y,x) = \|\nabla_{\mathrm{Lie}}\mathbf{h}(y,x)\|_F$",
+        "Wilson Plaquette Curvature (Task 1818057f)\n"
+        + r"$\mathcal{K}_{\mathrm{plaq}}(y,x) = 1 - \cos(\pi\tanh\|\mathbf{F}_{\mathrm{plaq}}\|_2)$",
         fontsize=8.8,
         fontweight="bold",
         color="#0F172A",
@@ -393,7 +562,7 @@ def generate_fig01(output_dir: Optional[Path] = None) -> Path:
     )
     cbar_b = fig.colorbar(im_plaq, ax=ax_b2, fraction=0.046, pad=0.04)
     cbar_b.ax.tick_params(labelsize=7.2)
-    cbar_b.set_label("Normalized Lie Curvature", fontsize=7.6, color="#334155")
+    cbar_b.set_label("Normalized Plaquette Curvature", fontsize=7.6, color="#334155")
 
     gs_c = GridSpecFromSubplotSpec(1, 3, subplot_spec=outer_gs[1, 0], wspace=0.18)
     ax_c1 = fig.add_subplot(gs_c[0, 0])
@@ -403,8 +572,8 @@ def generate_fig01(output_dir: Optional[Path] = None) -> Path:
     draw_panel_badge(
         ax_c1,
         "c",
-        "Visual Proof of Theorem I: Orthogonal Subspace Split Prevents Color Corruption",
-        r"Task 1818057f patch [8:19, 10:21]: unsplit $\mathrm{SO}(3)$ transport vs. $\mathcal{H}_{\mathrm{color}}^{(11)} \oplus \mathcal{H}_{\mathrm{geom}}^{(117)}$ projection",
+        "Visual Verification of Lemma 1: Orthogonal Subspace Split Prevents Color Corruption",
+        r"Task 1818057f patch [8:19, 10:21]: unsplit $\mathrm{SO}(3)^8$ holonomy vs. $\mathcal{H}_{\mathrm{color}}^{(11)} \oplus \mathcal{H}_{\mathrm{geom}}^{(117)}$ MGS2 projection",
         badge_bg="#0F172A",
         x_pos=-0.06,
         y_pos=1.18,
@@ -425,22 +594,24 @@ def generate_fig01(output_dir: Optional[Path] = None) -> Path:
         for c in range(11)
         if corrupted_patch[r, c] != patch_out[r, c]
     ]
+    unsplit_acc_pct = 100.0 * float((corrupted_patch == patch_out).mean())
     render_arc_grid(
         ax_c2,
         corrupted_patch,
-        title=r"Unsplit $\mathrm{SO}(3)$ Transport",
-        subtitle=f"Color-Space Mixing ({leak_unsplit_val:.3f} Leak)",
+        title=r"Unsplit $\mathrm{SO}(3)^8$ Holonomy",
+        subtitle=f"Color Drift ({unsplit_acc_pct:.1f}% Acc | Leak {leak_unsplit_val:.3f})",
         show_values=True,
-        highlight_cells=bad_cells,
+        highlight_cells=bad_cells if len(bad_cells) <= 60 else None,
         title_color="#B91C1C",
         title_fontsize=8.6,
     )
 
+    split_match_pct = 100.0 * float((pred_split_patch == patch_out).mean())
     render_arc_grid(
         ax_c3,
-        patch_out,
-        title="Theorem I Split NA3D",
-        subtitle=f"Zero Leak ({leak_split_val:.2e}) | 100% Exact",
+        pred_split_patch,
+        title="Lemma 1 Split NA3D (Ours)",
+        subtitle=f"Leak = {leak_split_val:.2e} ({split_match_pct:.0f}% Exact)",
         show_values=True,
         title_color="#047857",
         title_fontsize=8.6,
@@ -453,14 +624,15 @@ def generate_fig01(output_dir: Optional[Path] = None) -> Path:
     draw_panel_badge(
         ax_d1,
         "d",
-        r"Empirical $10\times 10$ Color-Subspace Cross-Leakage Matrix",
-        r"Off-diagonal coupling $|\langle \tilde{\mathbf{e}}_c, \mathbf{e}_{c'}\rangle - \delta_{cc'}|$ across all 10 ARC symbols",
+        r"Measured $10\times 10$ Prototype Cross-Leakage Matrix (Patch vs. 25-Task Benchmark)",
+        r"Coupling $|\langle \mathbf{h}_{\mathrm{after}}(\mathbf{e}_c) - \mathbf{h}_{\mathrm{before}}(\mathbf{e}_c), \mathbf{e}_{c'}\rangle|$ under $\mathrm{SO}(3)^8$ holonomy",
         badge_bg="#047857",
         x_pos=-0.04,
         y_pos=1.18,
     )
 
-    im_d1 = ax_d1.imshow(leak_matrix_unsplit, cmap="Reds", vmin=0.0, vmax=0.45, aspect="equal")
+    vmax_leak = max(0.32, float(leak_matrix_unsplit.max()))
+    im_d1 = ax_d1.imshow(leak_matrix_unsplit, cmap="Reds", vmin=0.0, vmax=vmax_leak, aspect="equal")
     ax_d1.set_xticks(range(10))
     ax_d1.set_yticks(range(10))
     ax_d1.set_xticklabels([str(i) for i in range(10)], fontsize=7.5)
@@ -468,43 +640,47 @@ def generate_fig01(output_dir: Optional[Path] = None) -> Path:
     ax_d1.set_xlabel("Target Color Symbol $c'$", fontsize=8.2)
     ax_d1.set_ylabel("Source Color Symbol $c$", fontsize=8.2)
     ax_d1.set_title(
-        r"Unsplit $\mathrm{SO}(3)$ Baseline" + f"\nFrobenius Leakage = {leak_unsplit_val:.3f}",
-        fontsize=8.6,
+        r"Unsplit $\mathrm{SO}(3)^8$ Baseline"
+        + f"\nPatch Max = {leak_unsplit_val:.3f} (25-Task = {bench_leak_unsplit:.3f})",
+        fontsize=8.4,
         fontweight="bold",
         color="#B91C1C",
         pad=5.5,
     )
 
-    ax_d2.imshow(leak_matrix_split, cmap="Blues", vmin=0.0, vmax=0.45, aspect="equal")
+    ax_d2.imshow(leak_matrix_split, cmap="Blues", vmin=0.0, vmax=vmax_leak, aspect="equal")
     ax_d2.set_xticks(range(10))
     ax_d2.set_yticks(range(10))
     ax_d2.set_xticklabels([str(i) for i in range(10)], fontsize=7.5)
     ax_d2.set_yticklabels([str(i) for i in range(10)], fontsize=7.5)
     ax_d2.set_xlabel("Target Color Symbol $c'$", fontsize=8.2)
     ax_d2.set_title(
-        f"Orthogonal-Split NA3D (Ours)\nFrobenius Leakage = {leak_split_val:.2e}",
-        fontsize=8.6,
+        "Orthogonal-Split NA3D (Ours)\n"
+        + f"Patch = {leak_split_val:.2e} (25-Task = {bench_leak_split:.2e})",
+        fontsize=8.4,
         fontweight="bold",
         color="#047857",
         pad=5.5,
     )
+    ratio_patch = leak_unsplit_val / max(leak_split_val, 1e-12)
+    ratio_bench = bench_leak_unsplit / max(bench_leak_split, 1e-12)
     ax_d2.text(
         4.5,
         4.5,
-        "Exact IEEE-754\nZero Coupling\n"
-        + r"$\mathbf{P}_{\mathrm{geom}}\mathbf{z}_{\mathrm{color}} = \mathbf{0}$"
-        + "\n(>7,500,000x Lower)",
+        "IEEE-754 FP32\nOrthogonal Projection\n"
+        + r"$\mathbf{Q}\mathbf{P}_{\mathrm{geom}} \equiv \mathbf{0}$"
+        + f"\nPatch: {ratio_patch:.1e}x Lower\n25-Task: {ratio_bench:.1e}x Lower",
         ha="center",
         va="center",
-        fontsize=8.2,
+        fontsize=7.8,
         fontweight="bold",
         color="#065F46",
-        bbox=dict(boxstyle="round,pad=0.35", facecolor="#ECFDF5", edgecolor="#10B981", lw=1.2, alpha=0.95),
+        bbox=dict(boxstyle="round,pad=0.32", facecolor="#ECFDF5", edgecolor="#10B981", lw=1.2, alpha=0.95),
     )
 
     cbar_d = fig.colorbar(im_d1, ax=[ax_d1, ax_d2], fraction=0.032, pad=0.04)
     cbar_d.ax.tick_params(labelsize=7.5)
-    cbar_d.set_label("Off-Diagonal Color Coupling Magnitude", fontsize=8.0)
+    cbar_d.set_label("Color Subspace Coupling Magnitude", fontsize=8.0)
 
     png_path = output_dir / "fig01_na3d_finsler_lie_3d.png"
     pdf_path = output_dir / "fig01_na3d_finsler_lie_3d.pdf"

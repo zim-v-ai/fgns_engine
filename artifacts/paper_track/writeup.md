@@ -1,163 +1,99 @@
 ## Abstract
+Many competitive approaches to the [Abstraction and Reasoning Corpus (ARC-AGI-2)](https://arcprize.org) employ Large Language Model (LLM) program synthesis, hand-crafted Domain-Specific Languages (DSLs), or hybrid neural-symbolic search. We explore a complementary geometric-analytical research direction: can spatial reasoning be expressed through compact, continuous-state geometric and topological operators—trained from scratch without LLMs or symbolic DSL search—that represent canvas boundaries, palette-quota distributions, 3D rotational symmetry, and cellular connectivity directly in latent space? As a first experimental realization of this program, we introduce the **Finsler-Gauge Cellular Sheaf Network (FGNS-TRM v5.0.0)**, a **6.57M-parameter (6,574,411)** hybrid prototype built around four mechanisms:
 
-Most competitive approaches to the [Abstraction and Reasoning Corpus (ARC-AGI-2)](https://arcprize.org) rely on Large Language Models (LLMs) generating Python code or combinatorial search over hand-crafted Domain-Specific Languages (DSLs). We explore a third geometric path: can a compact **6.57M-parameter (6,574,411)** continuous neural network—trained from scratch without LLMs or DSL search—perceive canvas boundaries, discrete color conservation, 3D symmetry, and topology directly? We introduce the **Finsler-Gauge Cellular Sheaf Network (FGNS-TRM)**, combining a geometric core with continuous operator relaxations across four inductive biases:
+1. **Two-Stage Upstream Structural Priors (`BoundaryMetricSizePredictor` & `EquivariantPaletteHistogramPredictor`):** A naive 30×30 padded representation with 11 cell states (colors 0..9 plus exterior `PAD=10`) admits up to 11^900 configurations. Before pixel decoding, Stage I resolves target dimensions (H★, W★) via coupled Boltzmann-Gibbs hypothesis voting and Woodbury-Tikhonov 1-Jet Stokes integration. Stage II estimates integer color quotas Σ N_c★ = H★ × W★ via S₁₀-equivariant 8D role descriptors, a diode annihilation sink for vanishing colors, and straight-through Hamilton-Hare largest remainder apportionment (`LRQ`), injecting N★ as a soft Potts chemical potential bias.
+2. **Orthogonal Color-Geometry Splitting & Non-Abelian 3D Frames (`NA3D-Finsler-Lie`):** Two-pass Modified Gram-Schmidt constructs a numerically orthonormal palette basis (||Q Q^T − I₁₁||_max = 2.38e-7 in FP32) to split the 128D latent space into an 11D palette subspace H_color^(11) and an orthogonal 117D geometric complement H_geom^(117). Tokens act as oriented 3D simplices (L, C, R, β) whose projected updates evolve via SO(3) Rodrigues rotations and asymmetric Finsler-Randers proper time, reducing measured rotational color-subspace leakage to residual FP32 error (1.05e-7 vs. 0.7881 across our 25-task suite, and 1.54e-8 vs. 0.2739 on unit-prototype patch tests).
+3. **8-Axis `OctoWave`, Stiefel Cellular Sheaves, Object Slots & Spectral-Green Operator:** Line-parallel 8-directional CUDA state-space scans (with discrete specular wall reflection) and edge-stopping Stiefel sheaf diffusion (Dirichlet energy ratio 0.707) couple with Schur-complement object slots, a Leave-One-Out Holographic Support Tape using SO(3) parallel transport, a non-linear J-involutive antisymmetric interaction operator (`True XOR`), and a 23-channel Differentiable Spectral-Green RKHS Operator.
+4. **Dual-State CfC/Cauchy Recurrence & MDL-Inspired Schatten-1 `LOO-TTT`:** Separate thought and draft states (Z, P) evolve via analytical Cauchy kernels across 4 steps, while task-specific operator weight perturbations ΔW = W − W₀ adapt during Leave-One-Out test-time training (`LOO-TTT`) under an MDL-inspired Schatten-1 nuclear norm penalty (compressing participation effective rank r_eff from 3.46 to 1.10 and reducing 5-task query loss from 0.4981 to 0.4736).
 
+Evaluated on the **ARC-AGI-2 Public Evaluation set** (single-pass transductive inference with 0 gradient TTT steps after 1 epoch / 1,000 steps of pretraining on `arc-agi_training_challenges.json`), Stage I achieves **76.74% (132/172) exact dimension accuracy** across all 120 tasks (**88.0% with 0.40 px MAE on our 25-task ablation suite** vs. 0.0% for an unconstrained MLP), Stage II cuts palette Earth Mover's Distance by **59.1%** (1.3488 to 0.5523), and the network solves dihedral occlusion (`0934a4d8`, 30×30 to 9×3) and topological cross filtering (`1818057f`, 22×22) at **100.0% exact match**, while reaching **98.93%** on Bravais lattice repair (`135a2760`) and **99.44%** on Eikonal flooding (`13e47133`) within **~8 GB peak training VRAM** on one RTX 5070 GPU.
 
-
-1. **Two-Stage Upstream Conservation Priors (BoundaryMetricSizePredictor & EquivariantPaletteHistogramPredictor):** Rather than searching an unconstrained 11^900 state space, the network contracts phase space before decoding: Stage I fixes canvas capacity K_cap = H★ × W★ <= 900 (pruning exterior cells to 10^K_cap), while Stage II contracts configurations to multinomial quotas K_cap! / Π (N_c★)! (10^27 -> 1.94e7 on 0934a4d8) via S_10 descriptors, an 80% diode sink, and Hamilton-Hare apportionment, injected as soft Potts chemical potentials.
-
-2. **Orthogonal Color-Geometry Splitting & Non-Abelian 3D Frames (NA3D-Finsler-Lie):** By Proposition I, two-pass Modified Gram-Schmidt splits the 128D latent space into an invariant 11D color subspace H_color and an orthogonal 117D geometric complement H_geom. Tokens act as oriented 3D simplices (L, C, R, β) evolving via SO(3) Rodrigues rotations and asymmetric Finsler-Randers proper time with machine-zero color leakage (1.05e-7).
-
-3. **8-Axis OctoWave, Stiefel Sheaves, Slots & Holographic Tape:** Line-parallel 8-direction CUDA scans (with specular reflection) and Proposition II Stiefel sheaf diffusion on V_32(R^128) (normalized MSE penalty 3.42e-11, Dirichlet ratio 0.707) couple with Schur slots, a Leave-One-Out Holographic Tape using SO(3) transport, symplectic True XOR, and a 23-channel Spectral-Green RKHS Operator.
-
-4. **Dual-State CfC/Cauchy Recurrence & Perturbation-Delta Schatten-1 LOO-TTT:** Separate thought and draft states (Z, P) evolve via Proposition III Cauchy kernels across 4 steps, while Proposition IV low-rank deltas ΔW adapt at test time under a Newton-Schulz Schatten-1 nuclear norm penalty (compressing rank from 3.46 to 1.10).
-
-
-
-On the blind **ARC-AGI-2 Public Evaluation set**, Stage I achieves **76.74% exact dimension accuracy** across all 120 tasks (**88.0% with 0.40 px MAE on our 25-task ablation suite** vs. 0.0% for an unconstrained MLP), Stage II cuts palette EMD by **59.1%** (1.3488 to 0.5523), and the network solves dihedral occlusion (0934a4d8, 30×30 to 9×3) and topological cross filtering (1818057f, 22×22) at **100.0% exact match**, while reaching **98.93%–99.44% pixel accuracy** on Bravais lattice repair (135a2760) and Eikonal flooding (13e47133) within **~8 GB peak VRAM** on one RTX 5070 GPU.
-
-
-
-![](https://www.googleapis.com/download/storage/v1/b/kaggle-user-content/o/inbox%2F32842221%2F2f2a413c0bfc7725bce740a4d6319106%2Ffig00_cover_variant_dark_manifold.png?generation=1793898998136750&alt=media)
-
-
+![](https://www.googleapis.com/download/storage/v1/b/kaggle-user-content/o/inbox%2F32842221%2F11fa5d6385eff887dfa121e8087c77ef%2Ffig00_cover_variant_dark_manifold.png?generation=1794257771816580&alt=media)
 
 ---
 
+## 1. Introduction, Prior Work & Research Program
+In [*On the Measure of Intelligence* (Chollet, 2019)](https://arxiv.org/abs/1911.01547) and the [*ARC Prize Technical Report* (Chollet et al., 2025/2026)](https://arxiv.org/abs/2601.10904), Chollet et al. emphasize that fluid generalization requires compact systems grounded in Core Knowledge priors (objectness, boundary geometry, symmetry, topology, and cardinal arithmetic). Standard continuous backbones ([Vision Transformers](https://arxiv.org/abs/2010.11929), [RoPE Transformers](https://arxiv.org/abs/2104.09864), and 2-axis [Mamba-2](https://arxiv.org/abs/2405.21060)) struggle on 2D grids when trained from scratch due to: (1) an unconstrained 11^900 output space lacking boundary or palette-quota priors, (2) flat 0D tokens whose dense spatial transformations mix geometry with discrete color identity, and (3) axial scans blind to 45-degree diagonal rays and 1-pixel barriers.
 
-
-## 1. Introduction & Prior Work
-
-In [*On the Measure of Intelligence* (Chollet, 2019)](https://arxiv.org/abs/1911.01547) and the [*ARC Prize Report* (Chollet et al., 2025/2026)](https://arxiv.org/abs/2601.10904), true generalization requires compact systems grounded in Core Knowledge priors (geometry, symmetry, topology, arithmetic). Standard backbones ([ViTs](https://arxiv.org/abs/2010.11929), [RoPE](https://arxiv.org/abs/2104.09864), 2-axis [Mamba-2](https://arxiv.org/abs/2405.21060)) struggle on 2D grids when trained from scratch due to: (1) an unconstrained 11^900 output space lacking boundary or mass conservation, (2) flat 0D tokens whose rotations mix geometry with color identity, and (3) axial scans blind to 45-degree diagonals.
-
-
-
-We build upon four compact paradigms: dual-state recurrence from [TRM (Jolicoeur-Martineau, 2025)](https://arxiv.org/abs/2510.04871), analytical Cauchy resolvents from [CfC (Hasani et al., 2022)](https://www.nature.com/articles/s42256-022-00556-7), test-time MDL compression from [CompressARC (Liao & Gu, 2025)](https://iliao2345.github.io/blog_posts/arc_agi_without_pretraining/arc_agi_without_pretraining.pdf), and cellular sheaf diffusion ([Hansen & Ghrist, 2019](https://arxiv.org/abs/1808.01513); [Bodnar et al., 2022](https://arxiv.org/abs/2202.04579)), unified across our four geometric primitives below.
-
-
+Beyond ARC-AGI-2, our work is motivated by a broader question in **Structural Computation** (building on relational inductive biases, [Battaglia et al., 2018](https://arxiv.org/abs/1806.01261), and Geometric Deep Learning, [Bronstein et al., 2021](https://arxiv.org/abs/2104.13478)): *can compact adaptive systems embed structural constraints, disentangled geometric representations, local-to-global propagation, associative memory, and complexity-controlled state refinement directly into their computational substrate, rather than reconstructing all structure statistically from flat latent vectors?* We use ARC-AGI-2 as an experimental testbed for selected aspects of this question, uniting dual-state recursive refinement from [TRM (Jolicoeur-Martineau, 2025)](https://arxiv.org/abs/2510.04871), analytical Cauchy resolvents from [CfC (Hasani et al., 2022)](https://www.nature.com/articles/s42256-022-00556-7), test-time compression from [CompressARC (Liao & Gu, 2025)](https://iliao2345.github.io/blog_posts/arc_agi_without_pretraining/arc_agi_without_pretraining.pdf), and cellular sheaf diffusion ([Hansen & Ghrist, 2019](https://arxiv.org/abs/1808.01513); [Bodnar et al., 2022](https://arxiv.org/abs/2202.04579)) with our four mechanisms below.
 
 ---
-
-
 
 ## 2. Approach & Mathematical Formulation (6.57M Parameters)
 
+### 2.1. Two-Stage Upstream Structural Priors
 
+![](https://www.googleapis.com/download/storage/v1/b/kaggle-user-content/o/inbox%2F32842221%2F8eb246414b9f213b37454a8b0ecc6449%2Ffig02_architecture_3d_stack.png?generation=1794257790883374&alt=media)
 
-### 2.1. Two-Stage Upstream Conservation Priors
-
-![](https://www.googleapis.com/download/storage/v1/b/kaggle-user-content/o/inbox%2F32842221%2F792369ac0ed56004c4d5321ef614e6a6%2Ffig02_architecture_3d_stack.png?generation=1793899013897304&alt=media)
-
-
-
-**Stage I (BoundaryMetricSizePredictor)** extracts an 8D 1-Jet basis φ(X) (divider spans φ_2 = L_cham, occluder size φ_3 = L_occ), coupling Boltzmann-Gibbs peaks with a Woodbury-Tikhonov Gram resolvent. This fixes canvas capacity K_cap = H★ × W★ <= 900, pruning exterior PAD cells and collapsing state space from 11^900 to 10^K_cap. **Stage II (EquivariantPaletteHistogramPredictor)** conditions on K_cap, using S_10-equivariant descriptors and an 80% diode sink to project proportions p_c★ onto quotas N_c★ via Hamilton-Hare apportionment:
-
-
+**Stage I (`BoundaryMetricSizePredictor` — Method 1)** uses a Shared-SRAM CUDA flood-fill and optical ray kernel to extract an 8D 1-Jet geometric basis φ(X) from demonstrations (input bounds, foreground box, divider chamber spans, vanishing occluder size, and extremal single-color bounds), coupling Boltzmann-Gibbs integer shift peaks over Z₆₁ × Z₆₁ with a Woodbury-Tikhonov dual Gram resolvent and terminal carrier-mask feedback. **Stage II (`EquivariantPaletteHistogramPredictor`)** conditions on K_cap = H★ × W★, using S₁₀-equivariant 8D role descriptors and a diode annihilation sink (>80% support disappearance threshold, absorbing vanished masks such as c=8: 27 → 0 px in Task `0934a4d8`) to project simplex proportions p_c★ onto integer quotas N_c★ via straight-through Hamilton-Hare apportionment (with 0-indexed descending remainder rank rank₀(r_c) in {0, ..., 9} in the forward pass and a bilinear straight-through surrogate gradient in the backward pass):
 
 $$
-
-N_c^\star = \lfloor p_c^\star K_{\mathrm{cap}} \rfloor + \mathbb{I}\left[\mathrm{rank}(r_c) \le K_{\mathrm{cap}} - \sum_{j=0}^9 \lfloor p_j^\star K_{\mathrm{cap}} \rfloor\right]
-
-
-Quotas contract configurations to multinomial combinations K_cap! / Π (N_c★)! (10^27 -> 1.94e7 on 0934a4d8), entering logits as a soft Potts chemical potential bias (1/2) tanh(g_chem) β_c so spatial features override imperfect advice across 52% of evaluation tasks.
+N _ c^\star = \lfloor p _ c^\star K _ {\mathrm{cap}} \rfloor + \mathbb{I}\left[\mathrm{rank} _ 0(r _ c) < K _ {\mathrm{cap}} - \sum _ {j=0}^9 \lfloor p _ j^\star K _ {\mathrm{cap}} \rfloor\right], \qquad \sum _ {c=0}^9 N _ c^\star = K _ {\mathrm{cap}}
 $$
 
+Crucially, N★ acts in the decoder not as a rigid combinatorial lock, but as a **soft Potts chemical potential bias** 0.5 tanh(g_chem) β_c. On Task `0934a4d8` (**Figure 2a,c**), because the vertical reflection [9:18, 0:3] of the cyan occluder [14:23, 0:3] self-overlaps across y_s = 15.5, our disjoint D₄ pullback operator selects main-diagonal transposition T_diag: (y, x) ↦ (x, y) from the unoccluded 3×9 top strip [0:3, 14:23] and overrides the soft global quota estimate to recover all 27 pixels exactly.
 
+### 2.2. Orthogonal Subspace Splitting & Non-Abelian 3D Token (`NA3D-Finsler-Lie`)
 
-### 2.2. Orthogonal Subspace Splitting & Non-Abelian 3D Token (NA3D-Finsler-Lie)
+![](https://www.googleapis.com/download/storage/v1/b/kaggle-user-content/o/inbox%2F32842221%2F054da5447dbf0786f03037c08491aff1%2Ffig01_na3d_finsler_lie_3d.png?generation=1794257805980016&alt=media)
 
-![](https://www.googleapis.com/download/storage/v1/b/kaggle-user-content/o/inbox%2F32842221%2F70cab7d4557ed28fe6e8d752d72e2905%2Ffig01_na3d_finsler_lie_3d.png?generation=1793899037311542&alt=media)
-
-
-
-By Proposition I, two-pass Modified Gram-Schmidt orthonormalizes the 11 palette prototypes E in R^(11×128) in FP32, splitting the latent space into an invariant color subspace H_color^(11) and an orthogonal geometric complement H_geom^(117). Inside H_geom^(117), features form 8 Non-Abelian Asymmetric 3D Token (NA3D) cells, each carrying a 3D receptor face L, a curvature core C, an emitter face R (spanning oriented chiral volume V = det[L, C, R]), and a Finsler-Randers drift covector β that acts as a directional causal diode (breaking flat symmetry d(u, v) != d(v, u)). Across directed edges, non-commutative Lie torsion generators L × R in so(3) rotate the core via the exact Rodrigues-Hamilton exponential map in SO(3) strictly inside H_geom^(117):
-
-
+We orthonormalize the 11 palette prototypes Q in V₁₁(R^128) via two-pass Modified Gram-Schmidt (`MGS2`) in IEEE-754 FP32 (||Q Q^T − I₁₁||_max = 2.38e-7). **Lemma 1 (Projected Color-Subspace Invariance):** For Q Q^T = I₁₁, defining orthogonal projectors P_color = Q^T Q and P_geom = I₁₂₈ − Q^T Q splits R^128 into H_color^(11) and H_geom^(117) with Q P_geom = 0, so any projected spatial update h' = h + P_geom Δh identically preserves all prototype inner products (Q h' = Q h). Inside H_geom^(117), features form 8 Non-Abelian Asymmetric 3D Token (`NA3D`) cells carrying a 3D receptor face L, curvature core C, emitter face R (oriented volume V = det[L, C, R]), and a bounded Finsler-Randers drift covector β (||β||₂ < 1 under Euclidean local metric A = I₃). Across directed edges, a second-order Baker-Campbell-Hausdorff (BCH) approximation constructs the Lie generator in so(3), whose exponential rotates C via the closed-form Rodrigues-Hamilton map strictly inside H_geom^(117):
 
 $$
-
-\mathbb{R}^{128} = \mathcal{H} _ {\mathrm{color}}^{(11)} \oplus \mathcal{H} _ {\mathrm{geom}}^{(117)}, \qquad \mathbf{U}(\theta,\hat{\mathbf{u}}) = I _ 3 + \sin(\theta)[\hat{\mathbf{u}}] _ {\times} + (1-\cos\theta)[\hat{\mathbf{u}}] _ {\times}^2 \in \mathrm{SO}(3), \qquad E P _ {\mathrm{geom}} \equiv \mathbf{0}
-
+\mathbb{R}^{128} = \mathcal{H} _ {\mathrm{color}}^{(11)} \oplus \mathcal{H} _ {\mathrm{geom}}^{(117)}, \qquad \mathbf{U}(\theta,\hat{\mathbf{u}}) = I _ 3 + \sin(\theta)[\hat{\mathbf{u}}] _ {\times} + (1-\cos\theta)[\hat{\mathbf{u}}] _ {\times}^2 \in \mathrm{SO}(3), \qquad Q P _ {\mathrm{geom}} \equiv \mathbf{0}
 $$
 
+Measured via max_{u,c} |⟨h'(u) − h(u), e_c⟩|, orthogonal projection reduces rotational color cross-leakage from **0.7881 to 1.05e-7** across our 25-task benchmark and from **0.2739 to 1.54e-8** on unit-prototype patch tests (preserving 100.0% patch accuracy vs. 28.9% under unsplit rotation, **Figure 1c–d**), while subsequent dense layers require explicit re-projection to prevent subspace re-mixing. Readout normalizes the 10D color fiber onto S^9 and couples the exterior PAD token (Z₁₀) to the carrier log-odds field ψ(y, x) via a zero-gap max envelope.
 
+### 2.3. 8-Axis `OctoWave`, Stiefel Sheaves, Holographic Tape & Spectral-Green Operator
 
-Because det(U) = +1 and E P_geom = 0, 3D rotations preserve norms, capture 2×2 Wilson plaquette holonomy, and yield machine-zero color leakage (1.05e-7 vs. 0.7881 for unsplit SO(3)). Color readout projects onto unit sphere S^9, coupling exterior PAD tokens (Z_10) to the carrier log-odds field ψ(y, x) via a zero-gap max envelope.
-
-
-
-### 2.3. 8-Axis OctoWave, Stiefel Sheaves, Holographic Tape & Spectral-Green Operator
-
+<!-- ВНИМАНИЕ, ВЯЧЕСЛАВ: Сюда можно загрузить обновлённую fig03_sheaf_cauchy_dynamics_3d.png (сейчас стоит рабочая ссылка на fig03): -->
 ![](https://www.googleapis.com/download/storage/v1/b/kaggle-user-content/o/inbox%2F32842221%2F8a037ac6e0d2e2183c7ee61a69bf30e6%2Ffig03_sheaf_cauchy_dynamics_3d.png?generation=1793899051164039&alt=media)
 
+![](https://www.googleapis.com/download/storage/v1/b/kaggle-user-content/o/inbox%2F32842221%2F28f4ffd46115c5499de683954561b66e%2Ffig06_topological_operators_gallery.png?generation=1794258175762248&alt=media)
 
-
-![](https://www.googleapis.com/download/storage/v1/b/kaggle-user-content/o/inbox%2F32842221%2Ff921a86b43e3ab345cdf23a02aba8932%2Ffig06_topological_operators_gallery.png?generation=1793899059550979&alt=media)
-
-
-
-1. **OctoWave 8-Axis SSM:** Line-parallel CUDA scans all 8 compass rays simultaneously with Householder wall reflections (11.31 diagonal reach vs. 0.00 for 2-axis Mamba-2).
-
-2. **Stiefel Sheaves & Slots:** By Proposition II, stalks project into R^32 via 5th-order Newton-Schulz on V_32(R^128) under edge-stopping coboundary Laplacians (Dirichlet ratio 0.707). Orthogonality is enforced via normalized MSE penalty (1/d_e) mean((W_u W_u^T - I_32)^2) = 3.42e-11 (pre-calibration Frobenius ||W_u W_u^T - I_32||_F approx 1.98e-3), while 12 slots resolve relational states via Schur extrapolation.
-
-3. **Holographic Tape & True XOR:** Support pairs are indexed using dual-scale centroids and retrieved via SO(3) parallel transport under Leave-One-Out masking, paired with a second-moment Dirichlet symplectic XOR engine preserving structural walls.
-
-4. **Differentiable Spectral-Green RKHS Operator (SpectralGreenWoodburyFunction):** Over a 23-channel basis (learnable D_4 wavelets χ_D4, Bravais periodicity, Chebyshev Eikonal distance) acting as continuous operator relaxations, topological transport solves regularized Woodbury-Green equations in closed form forward and implicit adjoint PDEs backward without iteration unrolling (< 3.7e-9 float64 error):
-
-
+1. **`OctoWave` 8-Axis SSM:** A line-parallel CUDA C++17 kernel scans all 8 compass rays simultaneously with single-bounce Householder specular reflection at walls (**Figure 3b** displays the normalized pre-`RMSNorm` 2D wavefield energy). Measured on an 8×8 impulse probe at (0, 0), the post-`RMSNorm(128)` diagonal impulse-response norm ||h_imp(7,7) − h_zero(7,7)||₂ at the opposite corner (7, 7) is **11.3104** (≈ √128, confirming non-zero single-pass diagonal signal arrival) versus **0.0000** for a single-pass horizontal-only 2-axis scan.
+2. **Stiefel Sheaves & Slots (Lemma 2):** Nodes project into R^32 edge stalks via 5th-order Newton-Schulz orthogonalization (elementwise MSE penalty 3.42e-11) and second-order Taylor Lie-exponential advection rotors I₃₂ + A_skew + 0.5 A_skew² (a quadratic approximation to exp(A_skew)). **Lemma 2:** For a frozen non-negative edge conductance matrix C_t >= 0, the coboundary sheaf Laplacian Δ_F(C_t) = δ₀^T C_t δ₀ >= 0 is positive semi-definite and strictly contracts quadratic Dirichlet energy on non-harmonic modes for 0 < β_diff < 2 / λ_max(Δ_F(C_t)); under non-linearly co-evolving Perona-Malik-Randers edge weights, empirical Dirichlet energy contracts to **0.707** (vs. **7.840** blowup for sign-inverted anti-diffusion, **Figure 3a,d**), while 12 object slots resolve occluded states via Woodbury-Schur extrapolation.
+3. **Holographic Tape & J-Involutive Antisymmetric Interaction (`True XOR`):** Support pairs (K_static = 6) are indexed using dual-scale local-glyph (5×5) and global centroids and retrieved via SO(3) Rodrigues parallel transport under strict Leave-One-Out masking, paired with a non-linear J-involutive antisymmetric interaction operator Ω_XOR(u, v) = u ⊙ tanh(J v) − v ⊙ tanh(J u) (J² = −I₁₂₈, Ω_XOR(u, u) = 0).
+4. **Differentiable Spectral-Green RKHS Operator (`SpectralGreenWoodburyFunction`):** Over a 23-channel basis (learnable D₄-steerable radial-shell wavelets χ_D4, Chebyshev Eikonal distance, and Gaussian-Bessel cavity harmonics), topological transport solves the regularized Woodbury-Green normal equations in closed form in the forward pass and executes **implicit differentiation through the regularized normal equations** in the backward pass (validated by float64 `torch.autograd.gradcheck` with relative Jacobian error <= 7.76e-10, **Figure 6**):
 
 $$
-
 \mathbf{G} _ \lambda \mathbf{W}^\star = \boldsymbol{\Psi} _ S^\top (\mathbf{m} _ S \odot \mathbf{Y} _ S) + \boldsymbol{\lambda} \odot \mathbf{W} _ 0, \qquad \mathbf{G} _ \lambda \boldsymbol{\Lambda} = \boldsymbol{\Psi} _ q^\top \bar{\mathbf{Z}} _ q + \bar{\mathbf{W}}^\star
-
 $$
 
-
-
-### 2.4. Dual-State Cauchy Recurrence & Schatten-1 LOO-TTT
-
-Across 4 steps, thought state Z relaxes via Proposition III proper-time dilated Cauchy resolvents with boundary viscosity and Lyapunov support gating. During LOO-TTT (TransductiveOperatorAdapter), we freeze E and adapt so(3)^8 rotors and operator projections under D_4 × S_9 automorphisms, penalizing weight deltas ΔW via Proposition IV Newton-Schulz Schatten-1 nuclear norm regularization:
-
-
+### 2.4. Dual-State Cauchy Recurrence & Schatten-1 `LOO-TTT`
+Across 4 steps, Z^(τ) relaxes via a proper-time dilated Cauchy resolvent with boundary viscosity and Lyapunov-gated support-residual correction ΔΩ_corr(τ). In `TransductiveOperatorAdapter` (**Method 2**), we freeze Q and adapt so(3)^8 rotors and operator projections across LOO support folds under D₄ × S₉ automorphisms (fixing background 0 and permuting foreground colors 1..9), applying MDL-inspired Schatten-1 nuclear norm regularization to weight perturbation deltas ΔW = W − W₀ to compress the Schatten-1/Frobenius participation effective rank r_eff(ΔW) = (||ΔW||₁ + Kδ)² / (||ΔW||_F² + Kδ²):
 
 $$
-
-Z^{(\tau)} = H_{\mathrm{spatial}}^{(\tau)} \odot e^{-0.35\omega_0 \Delta t_{\mathrm{eff}}} + \kappa F_{\mathrm{driving}}^{(\tau)} \odot \frac{1 - e^{-\omega_0 \Delta t_{\mathrm{eff}}}}{\omega_0}
-
+Z^{(\tau)} = H _ {\mathrm{spatial}}^{(\tau)} \odot e^{-0.35\omega _ 0 \Delta t _ {\mathrm{eff}}} + \kappa F _ {\mathrm{driving}}^{(\tau)} \odot \frac{1 - e^{-\omega _ 0 \Delta t _ {\mathrm{eff}}}}{\omega _ 0}
 $$
 
-
-
-![](https://www.googleapis.com/download/storage/v1/b/kaggle-user-content/o/inbox%2F32842221%2F6d0f1302459031ac5c0345dd9b062966%2Ffig07_spectral_mdl_ttt_dynamics.png?generation=1793899072491963&alt=media)
-
-
+![](https://www.googleapis.com/download/storage/v1/b/kaggle-user-content/o/inbox%2F32842221%2F40a78c91a3713ea3a30b72af0e03d7be%2Ffig07_spectral_mdl_ttt_dynamics.png?generation=1794258101634839&alt=media)
 
 ---
 
-
-
-## 3. Theoretical Conjectures & Future Directions Beyond ARC (NA3D-Gauge-Attention, SE(3) Trees & ARC-AGI-3)
-
-1. **NA3D-Gauge-Attention & Ultra-Deep Models:** Standard Transformers suffer from quadratic KV memory, heavy W_Q, W_K, W_V projections, and rank collapse. In NA3D, Receptor (L), Core (C), and Emitter (R) faces reside inside each 64-byte token, eliminating projection matrices (~75% parameter savings). Unit Jacobian |det J_U| = 1 strictly conserves Shannon differential entropy for isolated orthogonal rotations of core C_u in SO(3) across 1,000+ layers without vanishing gradients or positional encodings (No-PE). Extending this isochoric property past nonlinear activations to unitary gauge connections U(N) (Gauge-Invariant Attention) is formulated as a Theoretical Conjecture. Paired with Barnes-Hut trees in SE(3) and Finsler tokenizers, NA3D enables deeper models.
-
-2. **Upstream Conservation Priors for Scientific ML & ARC-AGI-3:** Woodbury boundary estimation and Hamilton-Hare apportionment generalize to molecular fragmentation, PDEs, and bounded action planning in [**ARC-AGI-3**](https://arcprize.org).
+## 3. Toward Structural Computation: Verified Properties vs. Open Research Program
+To separate what is empirically established in `FGNS-TRM v5.0.0` from our longer-term research program, we distinguish two levels:
+1. **Experimentally Supported Properties:** In controlled tests, projected `MGS2` updates preserve palette coordinates to ~10^-8–10^-7, Stiefel sheaf diffusion contracts Dirichlet energy (0.707) while preserving 1-pixel walls, and isolated SO(3) rotations (det U = +1) preserve Euclidean core norms (though global network entropy is still modulated by downstream non-linearities and normalizations).
+2. **Open Research Program in Structural Computation:** Rather than treating `FGNS-TRM` as a fixed 45-module monolith or a replacement for world-knowledge models, our next stage investigates: (a) **Architectural Reduction** into a portable **Minimal Spatial Operator O_spatial = (R_⊥, T_dir, B_sheaf, G_prior)** testable across standard CNN, GNN, SSM, and Transformer backbones; (b) **Neuro-Geometric Symbiosis**, where a compact geometric substrate acts as a structure-preserving "visual cortex" paired with high-level world-knowledge priors (LLMs or video/JEPA models) in interactive [**ARC-AGI-3**](https://arcprize.org) environments; and (c) turning our design principles (non-linearity, directional asymmetry, spatial covariance, and closed-form differentiability) into falsifiable cross-domain hypotheses through extensive testing and parallel implementations.
 
 ---
 
-## 4. Results, Ablations & Honest Assessment
+## 4. Results & Controlled Ablations
 
+![](https://www.googleapis.com/download/storage/v1/b/kaggle-user-content/o/inbox%2F32842221%2F5b2873aed25750279adc96d7f648c6cc%2Ffig04_arc2_visual_case_studies.png?generation=1794258065293255&alt=media)
 
+![](https://www.googleapis.com/download/storage/v1/b/kaggle-user-content/o/inbox%2F32842221%2F3781643a1450a4547efbfd700eee4020%2Ffig05_ablation_scientific_dashboard.png?generation=1794258109984373&alt=media)
 
-![](https://www.googleapis.com/download/storage/v1/b/kaggle-user-content/o/inbox%2F32842221%2Fe085f3895df6967541a89e6890e329a5%2Ffig04_arc2_visual_case_studies.png?generation=1793899080071934&alt=media)
+We evaluate `FGNS-TRM` (6,574,411 parameters, pretrained for 1 epoch / 1,000 steps in 1,051.57s on `arc-agi_training_challenges.json` within ~7.8–8.2 GB peak VRAM on one RTX 5070) across three distinct protocols:
 
+| Evaluation Protocol & Scope | Gradient TTT Steps | Key Measured Outcomes (`FGNS-TRM v5.0.0`) |
+| :--- | :---: | :--- |
+| **1. Full Public Evaluation (120 Tasks / 172 Instances)** | **0 steps (Disabled)** | **76.74% (132/172)** exact canvas size; **68.50%** unweighted mean per-instance pixel accuracy; **2/120 tasks (3/172 instances = 1.74%)** solved at 100% (`0934a4d8` & `1818057f`); **98.93%** on `135a2760` (832/841 px); **99.44%** on `13e47133` (895/900 px full pipeline; 100.0% pure Eikonal branch, **Figure 4**). |
+| **2. 8-Subsystem Ablation Suite (25 Public Eval Tasks)** | **2 steps (Studies 1–4, 6–8) / 0–2 steps (Study 5)** | **Stage I Size:** **88.0% exact** (0.40 px MAE vs. 68.0% identity & 0.0% spatial MLP). **Stage II Quota:** **48.0% exact budget** (vs. 0.0% unconstrained), **-59.1% EMD** (1.3488 → 0.5523), **-3.7x** color hallucinations (1.26% → 0.34%). **NA3D Frames:** **+6.54% pixel acc** (+8.03% FG) over flat ViT tokens (73.10% split vs. 72.98% unsplit). **4-Step Cauchy:** **+5.66% pixel acc** over T=1 (90.7% monotonic descent, **Figure 5**). |
+| **3. Continuous 8-Step `LOO-TTT` & `D4×S9` Stress Test (5 Tasks)** | **8 continuous steps** | **Geodesic SO(3)^8 + Schatten-1** reduces mean query loss from **0.4981 to 0.4736** (r_eff: 3.46 → 1.10, vs. 0.4824 Frobenius, 0.4841 Unreg-L2, and **0.5126 degradation** for Full Decoder FT), and achieves **100.0% (27/27 px)** on a D₄×S₉-transformed instance of `0934a4d8` vs. **40.74%** for static-color FT (**Figure 7**). |
 
+---
 
-![](https://www.googleapis.com/download/storage/v1/b/kaggle-user-content/o/inbox%2F32842221%2Ff35eafdaa02072fc6ca9666dac6a4cf7%2Ffig05_ablation_scientific_dashboard.png?generation=1793899090425995&alt=media)
-
-
-
-On the blind **ARC-AGI-2 Public Evaluation set** (6,574,411 parameters, **~7.8–8.2 GB peak VRAM** on one RTX 5070) after 1 epoch (1,000 steps) of pretraining, **FULL MODEL (FGNS-TRM)** achieves **76.74% (132/172) exact dimension accuracy** across all 120 tasks, **88.0% (22/25, MAE 0.40 px vs. 0.0% for a spatial MLP)** on our 25-task ablation suite (**Figure 5**), **48.0% exact color budget match** (cutting hallucinations by **3.7x** (1.26% to 0.34%) and EMD from 1.3488 to 0.5523), **+6.54% pixel accuracy** (+8.03% foreground) from NA3D over flat ViT tokens, **+5.66% pixel accuracy** from 4-step Cauchy recurrence (90.7% monotonic descent), **100.0% exact match** on 0934a4d8 and 1818057f, and **96.78%–99.44% pixel accuracy** on 135a2760 and 13e47133 (**Figure 4**).
-
-
-
-**Ablation Interpretation & Honest Assessment:** In Table 2 and Figure 5, four macro-components drive primary gains: Stage I geometry (+88.0% exact size), Stage II histogram (-59.1% EMD), Proposition I NA3D splitting (+6.54%), and 4-step Cauchy recurrence (+5.66%). Internal mixers (OctoWave SSM, Stiefel Sheaves, True XOR, Holographic Tape) exhibit modest ~0.05%–0.9% variance at Epoch 1 due to gradient short-circuiting through analytical Green bypasses, yet remain indispensable mathematical regularizers of physical invariants preventing topological collapse during deep scaling. Although our submission finished after deadline (Succeeded (after deadline) -> 0.00), this hybrid architecture demonstrates continuous, non-LLM reasoning on ARC-AGI-2, releasing our MIT-0 codebase, Rust ray-tracer, and monograph PDF below.
+## 5. Conclusion & Honest Assessment
+Our final competition submission finished executing after the deadline (`Succeeded (after deadline) -> 0.00`). Moreover, while network weights were trained exclusively on `arc-agi_training_challenges.json`, our analytical operator bases (`1-Jet`, diode sink, `23-channel Spectral-Green`, Bravais, Eikonal) were engineered after inspecting input-output pairs of representative Public Evaluation tasks (`0934a4d8`, `1818057f`, `135a2760`, `13e47133`) via our error inspector; thus, Public Evaluation metrics represent development-set diagnostics of a first-generation hybrid prototype rather than fully blind generalization. While upstream priors, 3D `NA3D` frames (+6.54%), and 4-step Cauchy recurrence (+5.66%) yield large gains over flat/single-pass baselines (**Figure 5**, Studies 1, 4, 6, 7), internal backbone mixer variants in Studies 2, 3, 5, and 8 verify target physical invariants (11.31 post-`RMSNorm` diagonal impulse-response norm at the opposite corner, 0.707 Dirichlet ratio, rank compression 3.46 → 1.10) but differ in pixel accuracy from simpler alternatives by ~0.05%–0.9% at 1 epoch (single seed, N=25). In our monograph, we outline candidate diagnostic hypotheses for these observations—such as analytical-bypass gradient competition and cross-manifold scaling friction—which are preliminary conjectures requiring extensive future experimentation, parallel implementations, architectural simplification, and multi-seed training. AI assistants were used during development for mathematical discussion, implementation, and translation; our MIT-0 codebase, Rust ray-tracer, and monograph PDF are released below.

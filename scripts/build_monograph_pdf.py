@@ -295,6 +295,16 @@ table code {
     display: inline-block;
 }
 
+.table-caption {
+    font-size: 7.5pt;
+    line-height: 1.28;
+    color: #1e293b;
+    font-style: italic;
+    text-align: justify;
+    padding-top: 3.5px;
+    margin-top: 1px;
+}
+
 /* Embedded Figures & Captions */
 img {
     max-width: 100%;
@@ -347,8 +357,8 @@ figcaption.monograph-caption code {
 
 /* MathJax Display & Inline Equations */
 div.arithmatex {
-    margin: 5px 0;
-    padding: 2px 0;
+    margin: 3.5px 0;
+    padding: 1px 0;
     overflow-x: visible;
     text-align: center;
     font-size: 92%;
@@ -409,9 +419,9 @@ def _postprocess_html(raw_html: str) -> str:
 
     html = re.sub(r'(<img\b[^>]*?\bsrc=")([^"]+)("[^>]*?>)', _replace_img_src, html)
 
-    # 3. Combine <p><img ...></p> followed by <p><em>Figure X | ...</em></p> into <figure>
+    # 3. Combine <p><img ...></p> followed by <p><em>Figure X | ...</em></p> (or inside the same <p>) into <figure>
     figure_pattern = re.compile(
-        r"<p>\s*(<img\b[^>]+>)\s*</p>\s*<p>\s*<em>(Figure\s+\d+\s*\|.*?)</em>\s*</p>",
+        r"<p>\s*(<img\b[^>]+>)\s*(?:</p>\s*<p>|<br\s*/?>)?\s*<em>(Figure\s+\d+\s*\|.*?)</em>\s*</p>",
         flags=re.DOTALL,
     )
     html = figure_pattern.sub(
@@ -419,9 +429,17 @@ def _postprocess_html(raw_html: str) -> str:
         html,
     )
 
-    # 4. Wrap <table>...</table> in <div class="table-wrapper">
+    # 4. Wrap <table>...</table> and its following <p><em>Table X | ...</em></p> caption in <div class="table-wrapper">
+    table_with_caption_pattern = re.compile(
+        r"(<table\b.*?</table>)\s*<p>\s*<em>(Table\s+\w+\s*\|.*?)</em>\s*</p>",
+        flags=re.DOTALL,
+    )
+    html = table_with_caption_pattern.sub(
+        r'<div class="table-wrapper">\1<div class="table-caption">\2</div></div>',
+        html,
+    )
     html = re.sub(
-        r"(<table\b.*?</table>)",
+        r"(?<!<div class=\"table-wrapper\">)(<table\b.*?</table>)",
         r'<div class="table-wrapper">\1</div>',
         html,
         flags=re.DOTALL,
@@ -570,6 +588,11 @@ def convert_markdown_to_html_document(md_path: Path) -> str:
             lambda _, r=replacement_div: r,
             body_html,
         )
+        body_html = re.sub(
+            rf"\s*{re.escape(token)}\s*</p>",
+            lambda _, r=replacement_div: f"</p>\n{r}",
+            body_html,
+        )
         body_html = body_html.replace(token, replacement_div)
 
     processed_body = _postprocess_html(body_html)
@@ -599,7 +622,7 @@ def convert_markdown_to_html_document(md_path: Path) -> str:
         },
         chtml: {
             scale: 0.96,
-            mtextInheritFont: true,
+            mtextInheritFont: false,
             displayAlign: 'center'
         },
         options: {
@@ -617,8 +640,10 @@ def convert_markdown_to_html_document(md_path: Path) -> str:
                     const containers = document.querySelectorAll('div.arithmatex');
                     containers.forEach(div => {
                         const mjx = div.querySelector('mjx-container');
-                        if (mjx && div.clientWidth > 0 && mjx.scrollWidth > div.clientWidth) {
-                            const ratio = (div.clientWidth / mjx.scrollWidth) * 0.98;
+                        const math = div.querySelector('mjx-math');
+                        const targetW = math ? math.getBoundingClientRect().width : (mjx ? mjx.scrollWidth : 0);
+                        if (mjx && div.clientWidth > 0 && targetW > div.clientWidth * 0.98) {
+                            const ratio = (div.clientWidth * 0.96) / targetW;
                             mjx.style.transform = `scale(${ratio})`;
                             mjx.style.transformOrigin = 'center center';
                         }
@@ -684,7 +709,7 @@ def render_html_to_pdf(html_path: Path, pdf_path: Path) -> Dict[str, int]:
         if browser_exe is not None:
             launch_kwargs["executable_path"] = str(browser_exe)
         browser = p.chromium.launch(**launch_kwargs)
-        page = browser.new_page(viewport={"width": 1240, "height": 1754})
+        page = browser.new_page(viewport={"width": 688, "height": 1020})
         page.goto(html_path.resolve().as_uri(), wait_until="networkidle", timeout=60000)
 
         # Wait for MathJax startup promise and custom completion flag
